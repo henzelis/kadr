@@ -26,7 +26,7 @@ jobs:
           - platform: windows-latest
             args: ""
           - platform: macos-latest
-            args: "--target aarch64-apple-darwin --target x86_64-apple-darwin"
+            args: "--target universal-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +35,9 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - name: rust targets for universal macOS build
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - name: rust cache
         uses: Swatinem/rust-cache@v2
         with:
