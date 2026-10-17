@@ -3,7 +3,9 @@
 
 use crate::domain::captured_date::{self, CapturedDate, DateSource, DateStatus};
 use crate::domain::location::{LocationSource, PlaceStatus};
-use crate::domain::media_item::{kind_from_extension, MediaItem, MediaKind, MetadataStatus};
+use crate::domain::media_item::{
+    is_supported_media, kind_from_extension, MediaItem, MediaKind, MetadataStatus,
+};
 use crate::domain::operation::LogLevel;
 use crate::errors::{KResult, KadrError};
 use crate::persistence::db::{self, SourceRoot};
@@ -16,24 +18,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanOptions {
     pub follow_symlinks: bool,
     pub include_hidden: bool,
     /// Use filesystem mtime as a date fallback (spec: opt-in only).
     pub fs_date_fallback: bool,
+    /// Hashing every file on first scan maxes CPU/disk for archives of tens
+    /// of thousands of photos; the duplicates search is opt-in instead.
     pub compute_hashes: bool,
-}
-
-impl Default for ScanOptions {
-    fn default() -> Self {
-        Self {
-            follow_symlinks: false,
-            include_hidden: false,
-            fs_date_fallback: false,
-            compute_hashes: true,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -241,6 +234,7 @@ pub fn scan_root(
             true
         });
 
+    let mut last_emit = std::time::Instant::now();
     for entry in walker {
         if cancel.load(Ordering::Relaxed) {
             break;
@@ -409,9 +403,14 @@ pub fn scan_root(
 
         progress.processed += 1;
         if progress.processed % 100 == 0 {
-            progress.current = path.to_string_lossy().to_string();
             tx.commit()?;
             tx = conn.unchecked_transaction()?;
+        }
+        // Emit at least once per second even on slow media (network drives),
+        // otherwise the UI looks frozen between batch checkpoints.
+        if progress.processed % 100 == 0 || last_emit.elapsed() >= std::time::Duration::from_secs(1)
+        {
+            progress.current = path.to_string_lossy().to_string();
             db::update_scan_progress(
                 conn,
                 job_id,
@@ -422,6 +421,7 @@ pub fn scan_root(
                 &progress.current,
             )?;
             on_progress(&progress);
+            last_emit = std::time::Instant::now();
         }
     }
 
@@ -431,8 +431,9 @@ pub fn scan_root(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let chunk: Vec<(PathBuf, MediaItem)> = pending[idx..(idx + 25).min(pending.len())].to_vec();
-        idx += 25;
+        let chunk: Vec<(PathBuf, MediaItem)> =
+            pending[idx..(idx + 100).min(pending.len())].to_vec();
+        idx += 100;
         let paths: Vec<PathBuf> = chunk.iter().map(|(p, _)| p.clone()).collect();
         let results = exif.read_batch(&paths);
         let mut by_path: std::collections::HashMap<PathBuf, MediaMetadata> =
@@ -519,6 +520,40 @@ pub fn scan_root(
     db::finish_scan_job(conn, job_id, cancelled)?;
     on_progress(&progress);
     Ok(progress)
+}
+
+/// Cheap counting pass over supported media — lets the UI draw a determinate
+/// progress bar with an ETA before the expensive metadata phase starts.
+pub fn count_media(root: &Path, opts: &ScanOptions) -> i64 {
+    WalkDir::new(root)
+        .follow_links(opts.follow_symlinks)
+        .max_depth(64)
+        .into_iter()
+        .filter_entry(|e| {
+            if !opts.include_hidden && e.depth() > 0 {
+                if let Some(name) = e.file_name().to_str() {
+                    if name.starts_with('.')
+                        || name == "node_modules"
+                        || name.starts_with("$RECYCLE")
+                    {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .filter_map(std::result::Result::ok)
+        .filter(|e| {
+            e.file_type().is_file()
+                && is_supported_media(
+                    e.path()
+                        .extension()
+                        .map(|x| x.to_string_lossy().to_lowercase())
+                        .unwrap_or_default()
+                        .as_str(),
+                )
+        })
+        .count() as i64
 }
 
 /// Apple live photos and edit sidecars: a same-stem sibling file travels with
@@ -608,27 +643,15 @@ mod tests {
         let conn = db::open_db(":memory:").unwrap();
         let root = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
         let cancel = AtomicBool::new(false);
-        let p1 = scan_root(
-            &conn,
-            &root,
-            &ScanOptions::default(),
-            "job1",
-            &cancel,
-            &|_| {},
-        )
-        .unwrap();
+        let opts = ScanOptions {
+            compute_hashes: true,
+            ..Default::default()
+        };
+        let p1 = scan_root(&conn, &root, &opts, "job1", &cancel, &|_| {}).unwrap();
         let (items, total) = query_media(&conn, &MediaFilter::default()).unwrap();
         assert_eq!(total, 2, "jpg+mov indexed, txt skipped: {items:?}");
 
-        let p2 = scan_root(
-            &conn,
-            &root,
-            &ScanOptions::default(),
-            "job2",
-            &cancel,
-            &|_| {},
-        )
-        .unwrap();
+        let p2 = scan_root(&conn, &root, &opts, "job2", &cancel, &|_| {}).unwrap();
         let (_, total2) = query_media(&conn, &MediaFilter::default()).unwrap();
         assert_eq!(total2, 2, "rescan must not duplicate");
         assert!(p1.found >= 2 && p2.found >= 2);
@@ -644,6 +667,55 @@ mod tests {
         .unwrap();
         assert!(items[0].sha256.is_some());
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn scan_walks_every_branch_and_multiple_roots_are_indexed() {
+        // Regression (Windows field report): a root with many sibling
+        // folders must have every branch indexed, and each source root
+        // scans independently with its own journal job.
+        let dir = std::env::temp_dir().join(format!("kadr-wide-{}", uuid::Uuid::new_v4()));
+        let dir2 = std::env::temp_dir().join(format!("kadr-wide2-{}", uuid::Uuid::new_v4()));
+        let mut expected = 0usize;
+        for year in ["2019", "2020", "2021", "2022", "2023"] {
+            for sub in ["vacation", "family", "events", "misc"] {
+                for n in 0..3 {
+                    touch_file(&dir.join(format!("{year}/{sub}/photo_{n}.jpg")), b"x");
+                    expected += 1;
+                }
+            }
+        }
+        // deep branch too
+        touch_file(&dir.join("a/b/c/d/e/deep.jpg"), b"x");
+        expected += 1;
+        for n in 0..5 {
+            touch_file(&dir2.join(format!("second_root_{n}.jpg")), b"x");
+            expected += 1;
+        }
+
+        let conn = db::open_db(":memory:").unwrap();
+        let root1 = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
+        let root2 = add_source_root(&conn, dir2.to_str().unwrap()).unwrap();
+        let cancel = AtomicBool::new(false);
+        for (i, root) in [&root1, &root2].into_iter().enumerate() {
+            scan_root(
+                &conn,
+                root,
+                &ScanOptions::default(),
+                &format!("job{i}"),
+                &cancel,
+                &|_| {},
+            )
+            .unwrap();
+        }
+        assert_eq!(count_media(&dir, &ScanOptions::default()), 61);
+        let (_, total) = query_media(&conn, &MediaFilter::default()).unwrap();
+        assert_eq!(
+            total as usize, expected,
+            "every branch of both roots indexed"
+        );
+        fs::remove_dir_all(&dir).ok();
+        fs::remove_dir_all(&dir2).ok();
     }
 
     #[test]

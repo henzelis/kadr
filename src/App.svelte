@@ -105,13 +105,24 @@ function pumpThumbs() {
 
 async function runScan() {
   try {
-    scanProgress = { job_id: "", found: 0, processed: 0, skipped: 0, errors: 0, current: "", finished: false, cancelled: false, error: null };
+    scanProgress = { job_id: "", found: 0, processed: 0, skipped: 0, errors: 0, total: 0, elapsed_ms: 0, current: "", finished: false, cancelled: false, error: null };
     await api.startScan();
     notify("Сканування запущено");
   } catch (e) {
     scanProgress = null;
     notify(String(e), "err");
   }
+}
+
+function scanPct(p: ScanProgress): number {
+  return p.total > 0 ? Math.min(99, Math.round((p.processed * 100) / p.total)) : 0;
+}
+function scanEta(p: ScanProgress): string {
+  if (!p.total || !p.processed || !p.elapsed_ms) return "";
+  const rate = p.processed / (p.elapsed_ms / 1000);
+  if (rate <= 0) return "";
+  const rem = Math.max(0, Math.round((p.total - p.processed) / rate));
+  return rem > 90 ? `${Math.round(rem / 60)} хв` : `${rem} с`;
 }
 
 async function buildPlan(mode?: string) {
@@ -268,8 +279,18 @@ function loadMore() {
   {#if scanProgress && !scanProgress.finished}
     <div class="banner">
       <span>⏳</span>
-      <span>Сканування: {scanProgress.processed} оброблено · {scanProgress.found} знайдено ·
-        {scanProgress.skipped} пропущено · {scanProgress.errors} помилок</span>
+      <div class="scaninfo">
+        <span>Сканування: {scanProgress.processed}{#if scanProgress.total} з {scanProgress.total}{/if} ·
+          {scanProgress.found} знайдено · {scanProgress.skipped} пропущено ·
+          {scanProgress.errors} помилок</span>
+        {#if scanProgress.total > 0}
+          <div class="pbar"><div class="pfill" style="width:{scanPct(scanProgress)}%"></div></div>
+          <span class="pmeta">{scanPct(scanProgress)}% · лишилось ≈ {scanEta(scanProgress)}</span>
+        {:else}
+          <div class="pbar"><div class="pfill indet"></div></div>
+        {/if}
+        {#if scanProgress.current}<span class="pcur">{scanProgress.current}</span>{/if}
+      </div>
       <button class="btn danger" onclick={() => api.cancelScan()}>Скасувати</button>
     </div>
   {:else if scanProgress && scanProgress.error}

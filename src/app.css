@@ -134,6 +134,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
   color: var(--accent-strong); display: flex; gap: 12px; align-items: center; margin-top: 12px;
 }
 .banner.err { background: var(--red-soft); color: var(--red); }
+.scaninfo { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pbar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 5px 0 3px; }
+.pfill { height: 100%; background: var(--accent-strong); border-radius: 3px; transition: width .5s ease; }
+.pfill.indet { width: 30%; animation: pslide 1.2s ease-in-out infinite alternate; }
+@keyframes pslide { from { margin-left: 0; } to { margin-left: 70%; } }
+.pmeta { font-size: 12px; opacity: .75; }
+.pcur { font-size: 11px; opacity: .6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .progress-track { flex: 1; height: 7px; border-radius: 99px; background: var(--surface-soft); overflow: hidden; }
 .progress-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .3s; }
 

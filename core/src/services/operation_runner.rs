@@ -492,7 +492,12 @@ mod tests {
         let conn = open_db(":memory:").unwrap();
         let root = add_source_root(&conn, src.to_str().unwrap()).unwrap();
         let cancel = AtomicBool::new(false);
-        scan_root(&conn, &root, &ScanOptions::default(), "j", &cancel, &|_| {}).unwrap();
+        // Undo tamper-check compares stored hashes — fixture scans with them on.
+        let opts = ScanOptions {
+            compute_hashes: true,
+            ..Default::default()
+        };
+        scan_root(&conn, &root, &opts, "j", &cancel, &|_| {}).unwrap();
         (conn, src, dest)
     }
 

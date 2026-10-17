@@ -97,6 +97,7 @@ export interface BuiltPlan { plan_id: string; summary: PlanSummary; items: PlanI
 
 export interface ScanProgress {
   job_id: string; found: number; processed: number; skipped: number; errors: number;
+  total: number; elapsed_ms: number;
   current: string; finished: boolean; cancelled: boolean; error: string | null;
 }
 export interface ApplyProgress {

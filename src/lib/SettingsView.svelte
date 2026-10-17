@@ -114,9 +114,10 @@ async function saveAll() {
       Використовувати координати як назву місця, якщо назви немає
     </label>
     <label style="display:flex;gap:8px;align-items:center;margin:8px 0;">
-      <input type="checkbox" checked={settings.compute_hashes_on_scan ?? true}
+      <input type="checkbox" checked={settings.compute_hashes_on_scan ?? false}
         onchange={(e) => (settings = { ...settings, compute_hashes_on_scan: e.currentTarget.checked })} />
-      Обчислювати SHA-256 під час сканування (потрібно для дублікатів)
+      Обчислювати SHA-256 під час сканування — лише для пошуку дублікатів; вимкнено, бо на великих
+      архівах це головний пожиратор часу сканування
     </label>
   </section>
 

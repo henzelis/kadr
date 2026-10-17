@@ -71,13 +71,23 @@ fn locate(bin: &str) -> Option<String> {
     which(bin)
 }
 
+/// GUI apps on Windows flash a console window for every spawned child —
+/// CREATE_NO_WINDOW keeps ExifTool/FFprobe silent even across thousands of calls.
+fn no_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    #[cfg(not(windows))]
+    let _ = cmd;
+}
+
 fn which(bin: &str) -> Option<String> {
-    let out = Command::new(if cfg!(windows) { "where" } else { "which" })
-        .arg(bin)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let mut probe = Command::new(if cfg!(windows) { "where" } else { "which" });
+    probe.arg(bin).stdout(Stdio::piped()).stderr(Stdio::null());
+    no_window(&mut probe);
+    let out = probe.output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -142,6 +152,7 @@ pub(crate) fn run_captured(
 
 fn run_capture(bin: &str, args: &[&str], timeout_s: u64) -> Option<String> {
     let mut cmd = Command::new(bin);
+    no_window(&mut cmd);
     cmd.args(args);
     let (status, stdout, _) = run_captured(&mut cmd, Duration::from_secs(timeout_s)).ok()?;
     if !status.map(|s| s.success()).unwrap_or(false) {
@@ -192,6 +203,7 @@ impl ExifTool {
             }
         };
         let mut cmd = Command::new(&bin);
+        no_window(&mut cmd);
         cmd.arg("-json").arg("-n").arg("-G1").arg("-a");
         for p in paths {
             cmd.arg(p);
@@ -214,95 +226,63 @@ impl ExifTool {
                     .collect()
             }
         };
-        if !status_opt.map(|s| s.success()).unwrap_or(false) {
-            // One bad file must not sink the whole batch (spec §16): retry per file.
-            if paths.len() > 1 {
-                let mut out = Vec::new();
-                for p in paths {
-                    let one = self.bin.as_ref().unwrap();
-                    let mut sc = Command::new(one);
-                    sc.arg("-json")
-                        .arg("-n")
-                        .arg("-G1")
-                        .arg("-a")
-                        .arg(p.as_path());
-                    let single = run_captured(&mut sc, Duration::from_secs(60));
-                    match single {
-                        Ok((Some(st), stdout, _)) if st.success() => {
-                            let objs = parse_exiftool_json(&String::from_utf8_lossy(&stdout))
-                                .unwrap_or_default();
-                            if let Some(obj) = objs.into_iter().next() {
-                                out.push((p.clone(), Ok(exiftool_to_metadata(&obj))));
-                            } else {
-                                out.push((
-                                    p.clone(),
-                                    Err(KadrError::user("ExifTool не повернув даних для файлу")),
-                                ));
-                            }
-                        }
-                        _ => {
-                            out.push((
-                                p.clone(),
-                                Err(KadrError::user_detail(
-                                    "Формат не підтримується або файл пошкоджений",
-                                    p.display().to_string(),
-                                )),
-                            ));
-                        }
-                    }
-                }
-                return out;
-            }
+        if status_opt.is_none() {
+            // The batch hit its wall-clock limit: report it, never retry-storm.
             return paths
                 .iter()
                 .map(|p| {
                     (
                         p.clone(),
                         Err(KadrError::user_detail(
-                            "Формат не підтримується або файл пошкоджений",
+                            "ExifTool не встиг відповісти (таймаут)",
                             p.display().to_string(),
                         )),
                     )
                 })
                 .collect();
         }
-        let parsed = parse_exiftool_json(&String::from_utf8_lossy(&stdout));
-        match parsed {
-            Ok(objects) => {
-                let mut by_file: std::collections::HashMap<
-                    String,
-                    serde_json::Map<String, serde_json::Value>,
-                > = objects.into_iter().map(|o| (source_file(&o), o)).collect();
-                paths
-                    .iter()
-                    .map(|p| {
-                        let key = p.to_string_lossy().to_string();
-                        match by_file.remove(&key) {
-                            Some(obj) => (p.clone(), Ok(exiftool_to_metadata(&obj))),
-                            None => (
-                                p.clone(),
-                                Err(KadrError::user_detail(
-                                    "ExifTool не повернув дані для файлу",
-                                    key,
-                                )),
-                            ),
-                        }
-                    })
-                    .collect()
+        // ExifTool exits non-zero on plain warnings — the JSON output decides
+        // success. Only files the batch skipped get one individual retry,
+        // otherwise a folder full of warnings turns into thousands of spawns.
+        let objects = parse_exiftool_json(&String::from_utf8_lossy(&stdout)).unwrap_or_default();
+        let mut by_file: std::collections::HashMap<
+            String,
+            serde_json::Map<String, serde_json::Value>,
+        > = objects.into_iter().map(|o| (source_file(&o), o)).collect();
+        let mut out = Vec::with_capacity(paths.len());
+        for p in paths {
+            let key = p.to_string_lossy().to_string();
+            if let Some(obj) = by_file.remove(&key) {
+                out.push((p.clone(), Ok(exiftool_to_metadata(&obj))));
+                continue;
             }
-            Err(e) => paths
-                .iter()
-                .map(|p| {
-                    (
-                        p.clone(),
-                        Err(KadrError::user_detail(
-                            "Помилка JSON ExifTool",
-                            e.to_string(),
-                        )),
-                    )
-                })
-                .collect(),
+            let one = self.bin.as_ref().unwrap();
+            let mut sc = Command::new(one);
+            no_window(&mut sc);
+            sc.arg("-json")
+                .arg("-n")
+                .arg("-G1")
+                .arg("-a")
+                .arg(p.as_path());
+            let objs = match run_captured(&mut sc, Duration::from_secs(60)) {
+                Ok((_, stdout1, _)) => {
+                    parse_exiftool_json(&String::from_utf8_lossy(&stdout1)).unwrap_or_default()
+                }
+                _ => Vec::new(),
+            };
+            if let Some(obj) = objs.into_iter().next() {
+                out.push((p.clone(), Ok(exiftool_to_metadata(&obj))));
+            } else {
+                out.push((
+                    p.clone(),
+                    Err(KadrError::user_detail(
+                        "Формат не підтримується або файл пошкоджений",
+                        p.display().to_string(),
+                    )),
+                ));
+            }
         }
+        out
     }
 }
 
@@ -517,6 +497,7 @@ impl MetadataReader for Ffprobe {
             reason: "не знайдено у PATH".into(),
         })?;
         let mut cmd = Command::new(bin);
+        no_window(&mut cmd);
         cmd.args([
             "-v",
             "error",
