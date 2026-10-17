@@ -60,9 +60,11 @@ fn locate(bin: &str) -> Option<String> {
         }
     }
     for dir in helper_dirs() {
-        for cand in [dir.join(bin), dir.join(format!("{bin}.exe"))] {
-            if cand.is_file() {
-                return Some(cand.to_string_lossy().into_owned());
+        for base in [dir.clone(), dir.join(bin)] {
+            for cand in [base.join(bin), base.join(format!("{bin}.exe"))] {
+                if cand.is_file() {
+                    return Some(cand.to_string_lossy().into_owned());
+                }
             }
         }
     }

@@ -24,7 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["helpers/*"],
+    "resources": ["helpers/**/*"],
     "linux": {
       "deb": {
         "depends": ["ffmpeg", "libimage-exiftool-perl"]

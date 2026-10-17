@@ -41,13 +41,25 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force src-tauri/helpers | Out-Null
-          choco install exiftool -y --no-progress | Out-Null
-          $ex = Get-ChildItem "$env:ProgramData\chocolatey\lib\exiftool\tools" -Filter *.exe | Select-Object -First 1
-          Copy-Item $ex.FullName src-tauri/helpers/exiftool.exe
+          # resolve the current official Windows build URL straight from exiftool.org
+          $page = (Invoke-WebRequest -UseBasicParsing https://exiftool.org/).Content
+          $url = [regex]::Match($page, 'https://sourceforge\.net/projects/exiftool/files/exiftool-[\d.]+_64\.zip/download').Value
+          if (-not $url) { throw "exiftool download URL not found on exiftool.org" }
+          Write-Host "exiftool source: $url"
+          curl.exe -sL -o ex.zip $url
+          Expand-Archive ex.zip -DestinationPath exdir
+          $inner = Get-ChildItem exdir -Directory | Select-Object -First 1
+          # the launcher requires exiftool_files/ as a sibling — flatten both into helpers/
+          Get-ChildItem $inner.FullName -Filter *.exe | Select-Object -First 1 | Copy-Item -Destination src-tauri/helpers/exiftool.exe
+          Copy-Item (Join-Path $inner.FullName "exiftool_files") src-tauri/helpers/exiftool_files -Recurse
+          Remove-Item ex.zip, exdir -Recurse -Force
           curl.exe -sL -o ff.zip https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip
           7z e -y ff.zip "ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe" -osrc-tauri/helpers/ | Out-Null
           Remove-Item ff.zip
-          Get-ChildItem src-tauri/helpers
+          Get-ChildItem src-tauri/helpers | Select-Object Name, Length
+          if (-not (Get-ChildItem src-tauri/helpers -Filter exiftool.exe)) { throw "exiftool.exe missing" }
+          if (-not (Get-ChildItem src-tauri/helpers -Filter ffprobe.exe)) { throw "ffprobe.exe missing" }
+
       - name: build web assets
         run: |
           npm ci
