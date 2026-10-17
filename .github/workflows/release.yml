@@ -36,6 +36,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: bundle helpers (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/helpers | Out-Null
+          choco install exiftool -y --no-progress | Out-Null
+          $ex = Get-ChildItem "$env:ProgramData\chocolatey\lib\exiftool\tools" -Filter *.exe | Select-Object -First 1
+          Copy-Item $ex.FullName src-tauri/helpers/exiftool.exe
+          curl.exe -sL -o ff.zip https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip
+          7z e -y ff.zip "ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe" -osrc-tauri/helpers/ | Out-Null
+          Remove-Item ff.zip
+          Get-ChildItem src-tauri/helpers
       - name: build web assets
         run: |
           npm ci
@@ -48,11 +60,10 @@ jobs:
           releaseName: "Kadr ${{ github.ref_name }}"
           releaseBody: |
             Kadr — локальний архіватор фото/відео.
-            Завантажте інсталятор для своєї платформи:
-            - Windows: `.msi` або `-setup.exe`
-            - Linux: `.AppImage`, `.deb`, `.rpm`
-            - macOS: `.dmg`
-            Для повної роботи потрібні безплатні зовнішні інструменти: ExifTool та FFprobe.
+            Завантажте збірку для своєї платформи:
+                        - Windows: `.msi` або `-setup.exe` — ExifTool і FFprobe вже всередині, працює відразу після встановлення
+                        - Linux: `.deb` (ExifTool і FFprobe до-install-юються автоматично), `.AppImage`, `.rpm`
+                        - macOS: `.dmg` (потрібні ExifTool і FFprobe з Homebrew)
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

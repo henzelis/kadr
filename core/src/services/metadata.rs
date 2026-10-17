@@ -33,10 +33,37 @@ pub struct ToolStatus {
     pub ffprobe_version: Option<String>,
 }
 
+/// Directories searched for bundled helpers, in order:
+/// KADR_HELPER_DIR (set by the shell to its resource dir), then dirs next to
+/// the executable (portable/AppImage layouts).
+fn helper_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(d) = std::env::var("KADR_HELPER_DIR") {
+        dirs.push(std::path::PathBuf::from(d));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            dirs.push(dir.join("helpers"));
+            dirs.push(dir.join("resources").join("helpers"));
+        }
+    }
+    dirs
+}
+
+/// Resolution order: explicit KADR_<BIN> override -> bundled helper shipped
+/// with the app -> system PATH. A bundled helper always wins over whatever
+/// happens to be on the user's PATH, so behavior is identical on every machine.
 fn locate(bin: &str) -> Option<String> {
     if let Ok(p) = std::env::var(format!("KADR_{}", bin.to_uppercase())) {
         if Path::new(&p).exists() {
             return Some(p);
+        }
+    }
+    for dir in helper_dirs() {
+        for cand in [dir.join(bin), dir.join(format!("{bin}.exe"))] {
+            if cand.is_file() {
+                return Some(cand.to_string_lossy().into_owned());
+            }
         }
     }
     which(bin)
@@ -791,6 +818,41 @@ mod tests {
             "lon {}",
             geo.longitude
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bundled_helper_resolved_before_path() {
+        let dir = std::env::temp_dir().join(format!("kadr-hlp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("kadr-fake-tool");
+        std::fs::write(&fake, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::env::set_var("KADR_HELPER_DIR", &dir);
+        let found = locate("kadr-fake-tool").expect("bundled helper must be found");
+        assert_eq!(found, fake.to_string_lossy());
+        // tools not present anywhere resolve to None, never a panic
+        assert!(locate("kadr-definitely-not-a-tool-xyz").is_none());
+        std::env::remove_var("KADR_HELPER_DIR");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn explicit_override_beats_everything() {
+        let dir = std::env::temp_dir().join(format!("kadr-ovr-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("mytool.exe");
+        std::fs::write(&target, "x").unwrap();
+        std::env::set_var("KADR_KADROVRTOOL", &target);
+        assert_eq!(
+            locate("kadrovrtool").as_deref(),
+            Some(target.to_string_lossy().as_ref())
+        );
+        std::env::remove_var("KADR_KADROVRTOOL");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

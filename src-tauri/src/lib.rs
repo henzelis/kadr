@@ -9,6 +9,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            if let Ok(rd) = app.path().resource_dir() {
+                std::env::set_var("KADR_HELPER_DIR", rd.join("helpers"));
+            }
             let data_dir = app.path().app_data_dir().expect("app data dir");
             std::fs::create_dir_all(&data_dir).ok();
             let state = AppState::new(&data_dir);
