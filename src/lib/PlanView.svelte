@@ -231,6 +231,7 @@ function destPreview(p: string, root: string) {
   </div>
 {/if}
 
+<svelte:window on:keydown={(e) => e.key === "Escape" && ((confirmOpen = false), (editing = null))} />
 {#if confirmOpen && plan}
   <div class="modal-backdrop" role="dialog" aria-modal="true">
     <div class="modal-card">

@@ -122,6 +122,9 @@ function pumpThumbs() {
 }
 
 async function runScan() {
+  sortedDone = false;
+  applyProgress = null;
+  plan = null;
   try {
     scanProgress = { job_id: "", found: 0, processed: 0, skipped: 0, errors: 0, total: 0, elapsed_ms: 0, current: "", finished: false, cancelled: false, error: null };
     await api.startScan();
@@ -146,6 +149,47 @@ async function addSource() {
     await refreshAll();
     if (!roots.length || (scanProgress && scanProgress.finished)) notify("Папку додано. Натисніть «Сканувати».");
   } catch (e) { notify(String(e), "err"); }
+}
+
+// ── one-click spine: folder -> analyze -> sort ──
+let scanRunning = false;
+let sortBusy = false;
+let sortConfirm = false;
+let sortedDone = false;
+$: scanRunning = !!scanProgress && !scanProgress.finished;
+$: scanPctV = (() => {
+  const p = scanProgress;
+  if (!p) return 0;
+  const done = p.processed + p.skipped;
+  return p.total > 0 ? Math.min(100, Math.round((done * 100) / p.total)) : 0;
+})();
+$: scanEta = (() => {
+  const p = scanProgress;
+  if (!p || p.finished || p.total <= 0) return "";
+  const done = p.processed + p.skipped;
+  if (done < 25 || p.elapsed_ms < 3000) return "";
+  const remain = (p.elapsed_ms * (p.total - done)) / done;
+  if (remain < 5000) return "майже готово";
+  const m = Math.round(remain / 60000);
+  return m >= 1 ? `≈ ${m} хв залишилось` : `≈ ${Math.round(remain / 1000)} с залишилось`;
+})();
+
+async function runSort() {
+  if (!settings?.destination_root) {
+    notify("Спершу оберіть папку, куди складати відсортоване", "err");
+    settingsOpen = true;
+    return;
+  }
+  sortBusy = true;
+  try {
+    await buildPlan("copy");
+    if (plan) sortConfirm = true;
+  } finally { sortBusy = false; }
+}
+async function confirmSort() {
+  sortConfirm = false;
+  if (!plan) return;
+  try { await api.applyPlan(plan.plan_id, true); } catch (e) { notify(String(e), "err"); }
 }
 
 async function buildPlan(mode?: string) {
@@ -273,7 +317,7 @@ onMount(async () => {
     applyProgress = p;
     if (p.finished) {
       if (p.error) notify(p.error, "err");
-      else notify(`Готово: ${p.done}, помилок: ${p.failed}`, p.failed ? "err" : "ok");
+      else { sortedDone = p.done > 0; notify(`Готово: ${p.done}, помилок: ${p.failed}`, p.failed ? "err" : "ok"); }
       loadStats();
       if (plan) api.getPlan(plan.plan_id).then(([items2, summary]) => (plan = { ...plan!, items: items2, summary }));
     }
@@ -289,6 +333,8 @@ onMount(async () => {
   }
 });
 </script>
+
+<svelte:window on:keydown={(e) => e.key === "Escape" && (sortConfirm = false)} />
 
 <div class="app-root">
   <header class="titlebar">
@@ -332,18 +378,56 @@ onMount(async () => {
           <li><b>4</b>Підтвердження</li>
         </ol>
         <div class="header-actions">
-          <button class="btn secondary" onclick={runScan}
-            disabled={!!scanProgress && !scanProgress.finished}>↻ <span>Сканувати</span></button>
+          {#if !scanRunning}
+            <button class="btn secondary" onclick={runScan}>↻ <span>Сканувати</span></button>
+          {/if}
           {#if view === "plan"}
             <button class="btn secondary" onclick={() => setView("library")}>До медіатеки <span>→</span></button>
+          {:else if scanRunning}
+            <button class="btn primary" disabled>Сканування… {scanPctV}%</button>
+          {:else if !roots.length}
+            <button class="btn primary" onclick={addSource}><span>＋</span> Вибрати папку з фото</button>
+          {:else if (stats.total ?? 0) === 0}
+            <button class="btn primary" onclick={runScan}>▶ Аналізувати</button>
+          {:else if !sortedDone}
+            <button class="btn primary" onclick={runSort} disabled={sortBusy}>
+              {sortBusy ? "Готуємо план…" : "✨ Сортувати за датою та місцем"}</button>
           {:else}
-            <button class="btn primary" onclick={gotoPlan}>Переглянути план <span>→</span></button>
+            <button class="btn secondary" onclick={gotoPlan}>Переглянути план <span>→</span></button>
           {/if}
         </div>
         </div>
       </div>
 
       <div class="scroll">
+        {#if scanRunning && scanProgress}
+          <div class="scan-card">
+            <div class="scan-head"><span class="spin">◌</span>
+              <b>Скануємо медіатеку…</b>
+              <span class="scan-pct">{scanPctV}%</span>
+              {#if scanEta}<span class="scan-eta">{scanEta}</span>{/if}</div>
+            <div class="progress-track" style="height:6px;"><div class="progress-fill" style="width:{scanPctV}%"></div></div>
+            <div class="scan-meta">
+              <span>оброблено <b>{scanProgress.processed}</b> з <b>{scanProgress.total || scanProgress.found}</b></span>
+              {#if scanProgress.errors > 0}<span>помилок: <b>{scanProgress.errors}</b></span>{/if}
+              {#if scanProgress.current}<span class="scan-cur">зараз: {scanProgress.current}</span>{/if}
+            </div>
+            <div style="margin-top:10px;">
+              <button class="btn secondary" style="min-height:30px;font-size:11px;" onclick={() => api.cancelScan()}>Скасувати</button>
+            </div>
+          </div>
+        {:else if scanProgress?.finished && !scanProgress.cancelled && !sortedDone && view !== "plan" && view !== "log"}
+          <div class="done-banner">
+            <div>
+              <b>Проаналізовано {scanProgress.processed} файлів — усе готово до сортування.</b>
+              Kadr складе їх у архів за схемою Рік / Місяць / Місце. Оригінали залишаться на місці (режим «Копіювати»).
+            </div>
+            <div class="done-actions">
+              <button class="btn primary" onclick={runSort} disabled={sortBusy}>{sortBusy ? "Готуємо…" : "✨ Сортувати"}</button>
+              <button class="edit-text" onclick={gotoPlan}>хочу перевірити кожен шлях →</button>
+            </div>
+          </div>
+        {/if}
         {#if ["library", "review", "nodate", "nogeo"].includes(view)}
           {#if view === "library" && !roots.length}
             <Onboarding {roots} {settings} onRefresh={refreshAll} onStart={runScan} />
@@ -595,6 +679,30 @@ onMount(async () => {
       {/if}
     </aside>
   </div>
+
+{#if sortConfirm && plan}
+    <div class="modal-backdrop" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <div class="modal-title">Сортування: все одразу</div>
+            <div class="modal-subtitle">Kadr <b>скопіює</b> файли в архів за схемою Рік / Місяць / Місце.
+              Оригінали не чіпаються; будь-який крок можна скасувати.</div>
+          </div>
+          <button class="icon-button" aria-label="Закрити" onclick={() => (sortConfirm = false)}>×</button>
+        </div>
+        <p style="margin:0;">Файлів: <b>{plan.items.filter((i) => i.status === "pending").length}</b> ·
+          обсяг: <b>{fmtBytes(plan.summary.expected_bytes)}</b> ·
+          куди: <b>{settings?.destination_root}</b></p>
+        <div style="margin-top:10px;"><button class="edit-text"
+          onclick={() => { sortConfirm = false; gotoPlan(); }}>Показати детальний план по кожному файлу →</button></div>
+        <div class="modal-actions">
+          <button class="btn secondary" onclick={() => (sortConfirm = false)}>Скасувати</button>
+          <button class="btn primary" onclick={confirmSort}>✨ Сортувати</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <footer class="footer">
     <div class="footer-left">

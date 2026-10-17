@@ -433,7 +433,10 @@ pub fn scan_root(
             last_emit = std::time::Instant::now();
         } else if last_emit.elapsed() >= std::time::Duration::from_secs(1) {
             // Heartbeat even on slow media (network drives): never look frozen.
-            progress.current = path.to_string_lossy().to_string();
+            progress.current = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             if progress.processed % 500 == 0 {
                 tx.commit()?;
                 tx = conn.unchecked_transaction()?;
@@ -656,7 +659,6 @@ fn flush_batch(
         db::upsert_media_item(tx, &item)?;
         progress.processed += 1;
     }
-    progress.current = format!("метадані: {} з {}", progress.processed, progress.found);
     Ok(())
 }
 

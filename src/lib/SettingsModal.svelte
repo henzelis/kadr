@@ -40,6 +40,7 @@ async function saveAll() {
 }
 </script>
 
+<svelte:window on:keydown={(e) => e.key === "Escape" && onClose()} />
 <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="modalTitle"
   onclick={(e) => e.target === e.currentTarget && onClose()}>
   <div class="modal-card">

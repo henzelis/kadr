@@ -210,6 +210,19 @@ h1 { margin: 0; font-size: clamp(22px, 2vw, 27px); font-weight: 730; letter-spac
 .destination-path { font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; color: var(--text); font-weight: 620; }
 .destination-hint { margin-top: 8px; font-size: 9px; color: var(--muted); line-height: 1.4; }
 
+/* ── Scan progress card & done banner ── */
+.scan-card { border: 1px solid #d5e4ce; background: var(--surface-raised); border-radius: 12px; padding: 15px 16px; margin-bottom: 16px; box-shadow: var(--shadow); }
+.scan-head { display: flex; align-items: baseline; gap: 10px; font-size: 13px; margin-bottom: 10px; }
+.scan-pct { font-size: 17px; font-weight: 780; color: var(--accent-strong); letter-spacing: -.4px; }
+.scan-eta { color: var(--muted); font-size: 11px; margin-left: auto; }
+.spin { display: inline-block; animation: kadr-spin 1.6s linear infinite; color: var(--accent); font-size: 16px; }
+@keyframes kadr-spin { to { transform: rotate(360deg); } }
+.scan-meta { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 11px; margin-top: 9px; }
+.scan-cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; }
+.done-banner { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap;
+  border: 1px solid #d5e4ce; background: var(--accent-soft); border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; font-size: 12px; }
+.done-actions { display: flex; align-items: center; gap: 12px; }
+
 /* ── Hero steps ── */
 .hero-right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 .steps { display: flex; align-items: center; gap: 16px; list-style: none; margin: 0; padding: 0; color: var(--muted); font-size: 10px; font-weight: 650; }

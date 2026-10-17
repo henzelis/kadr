@@ -44,7 +44,8 @@ async function changeDest() {
 function scanPct(): number {
   const p = scanProgress;
   if (!p || p.finished) return stats.total ? 100 : 0;
-  return p.total > 0 ? Math.min(99, Math.round((p.processed * 100) / p.total)) : 0;
+  const done = p.processed + p.skipped;
+  return p.total > 0 ? Math.min(99, Math.round((done * 100) / p.total)) : 0;
 }
 </script>
 
