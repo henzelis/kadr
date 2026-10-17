@@ -64,8 +64,24 @@ jobs:
           Get-ChildItem $inner.FullName -Filter *.exe | Select-Object -First 1 | Copy-Item -Destination src-tauri/helpers/exiftool.exe
           Copy-Item (Join-Path $inner.FullName "exiftool_files") src-tauri/helpers/exiftool_files -Recurse
           Remove-Item ex.zip, exdir -Recurse -Force
-          curl.exe -sL -o ff.zip https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip
-          7z e -y ff.zip "ffmpeg-master-latest-win64-gpl/bin/ffprobe.exe" -osrc-tauri/helpers/ | Out-Null
+          # BtbN renames assets per autobuild — pick a real one via the API with retries
+          $asset = $null
+          for ($i = 1; $i -le 3 -and -not $asset; $i++) {
+            $rels = Invoke-RestMethod "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=10"
+            foreach ($rel in $rels) {
+              $a = $rel.assets | Where-Object { $_.name -like '*win64-gpl.zip' } | Select-Object -First 1
+              if ($a) { $asset = $a; break }
+            }
+            if (-not $asset) { Start-Sleep 20 }
+          }
+          if (-not $asset) { throw "no BtbN win64 ffprobe build found" }
+          Write-Host "ffprobe source: $($asset.browser_download_url)"
+          for ($i = 1; $i -le 3; $i++) {
+            curl.exe -sL -o ff.zip $asset.browser_download_url
+            if ((Get-Item ff.zip).Length -gt 10MB) { break }
+            Write-Host "ff.zip too small (attempt $i), retrying..."; Start-Sleep 20
+          }
+          7z e -y ff.zip "*/bin/ffprobe.exe" -osrc-tauri/helpers/ | Out-Null
           Remove-Item ff.zip
           Get-ChildItem src-tauri/helpers | Select-Object Name, Length
           if (-not (Get-ChildItem src-tauri/helpers -Filter exiftool.exe)) { throw "exiftool.exe missing" }
