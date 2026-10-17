@@ -63,6 +63,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .sidebar hr { border: none; border-top: 1px solid var(--line); margin: 10px 4px; }
 .sidebar .roots { padding: 0 8px; color: var(--muted); font-size: 11.5px; }
 .root-chip { display: flex; gap: 6px; align-items: center; padding: 4px 8px; border-radius: 7px; }
+.root-add { width: 100%; margin-top: 8px; padding: 7px 9px; border: 1px dashed var(--line); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; font-size: 12.5px; opacity: .8; }
+.root-add:hover { border-color: var(--accent); opacity: 1; }
 .root-chip:hover { background: var(--surface-soft); }
 .root-chip .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; flex: 1; }
 

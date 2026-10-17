@@ -8,6 +8,7 @@ import {
   type MediaFilter, type MediaItem, type ScanProgress, type SourceRoot, type ToolStatus,
 } from "./lib/api";
 import Sidebar from "./lib/Sidebar.svelte";
+import Onboarding from "./lib/Onboarding.svelte";
 import SettingsView from "./lib/SettingsView.svelte";
 import LogView from "./lib/LogView.svelte";
 import PlanView from "./lib/PlanView.svelte";
@@ -123,6 +124,12 @@ function scanEta(p: ScanProgress): string {
   if (rate <= 0) return "";
   const rem = Math.max(0, Math.round((p.total - p.processed) / rate));
   return rem > 90 ? `${Math.round(rem / 60)} хв` : `${rem} с`;
+}
+
+async function refreshAll() {
+  roots = await api.listRoots();
+  settings = await api.getSettings();
+  await loadStats();
 }
 
 async function buildPlan(mode?: string) {
@@ -298,7 +305,7 @@ function loadMore() {
   {/if}
 
   <div class="main">
-    <Sidebar {view} {stats} {roots} {setView} />
+    <Sidebar {view} {stats} {roots} {setView} onRootAdded={refreshAll} />
 
     <div class="content">
       {#if view === "library" || view === "review" || view === "nodate" || view === "nogeo"}
@@ -328,7 +335,9 @@ function loadMore() {
       <div class="body-wrap">
         <div class="scroll">
           {#if view === "library" || view === "review" || view === "nodate" || view === "nogeo"}
-            {#if !items.length}
+            {#if !items.length && !roots.length && view === "library"}
+              <Onboarding {roots} {settings} onRefresh={refreshAll} onStart={runScan} />
+            {:else if !items.length}
               <div class="empty">
                 {roots.length
                   ? "Немає файлів за цим фільтром. Запустіть «Сканувати»."

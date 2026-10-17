@@ -1,8 +1,18 @@
 <script lang="ts">
+import { open } from "@tauri-apps/plugin-dialog";
+import { api } from "./api";
 export let view: string;
 export let stats: Record<string, number>;
 export let roots: { id: string; path: string }[];
 export let setView: (v: string) => void;
+export let onRootAdded: (() => void) | undefined = undefined;
+
+async function addRoot() {
+  const dir = await open({ directory: true, title: "Виберіть вихідну папку з фото/відео" });
+  if (!dir) return;
+  await api.addRoot(String(dir));
+  onRootAdded?.();
+}
 
 const views = [
   { id: "library", label: "Усі медіа", icon: "▦", countKey: "total" },
@@ -35,7 +45,8 @@ const views = [
       </div>
     {/each}
     {#if !roots.length}
-      <div class="kbd-hint">Ще не додано. У «Налаштуваннях».</div>
+      <div class="kbd-hint">Ще не додано — почніть з кнопки нижче.</div>
     {/if}
+    <button class="root-add" onclick={addRoot}>＋ Додати папку</button>
   </div>
 </nav>

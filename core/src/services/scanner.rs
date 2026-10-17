@@ -401,16 +401,43 @@ pub fn scan_root(
             }
         }
 
-        progress.processed += 1;
-        if progress.processed % 100 == 0 {
+        if meta_ok_cached {
+            progress.processed += 1;
+        }
+        // Metadata is collected in batches DURING the walk, so the progress
+        // bar means "fully processed", not merely "discovered".
+        if pending.len() >= FLUSH_BATCH {
+            let chunk = std::mem::take(&mut pending);
+            flush_batch(
+                conn,
+                &mut tx,
+                &exif,
+                &ff,
+                opts,
+                job_id,
+                &chunk,
+                &mut progress,
+            )?;
             tx.commit()?;
             tx = conn.unchecked_transaction()?;
-        }
-        // Emit at least once per second even on slow media (network drives),
-        // otherwise the UI looks frozen between batch checkpoints.
-        if progress.processed % 100 == 0 || last_emit.elapsed() >= std::time::Duration::from_secs(1)
-        {
+            db::update_scan_progress(
+                conn,
+                job_id,
+                progress.found,
+                progress.processed,
+                progress.skipped,
+                progress.errors,
+                &progress.current,
+            )?;
+            on_progress(&progress);
+            last_emit = std::time::Instant::now();
+        } else if last_emit.elapsed() >= std::time::Duration::from_secs(1) {
+            // Heartbeat even on slow media (network drives): never look frozen.
             progress.current = path.to_string_lossy().to_string();
+            if progress.processed % 500 == 0 {
+                tx.commit()?;
+                tx = conn.unchecked_transaction()?;
+            }
             db::update_scan_progress(
                 conn,
                 job_id,
@@ -425,69 +452,23 @@ pub fn scan_root(
         }
     }
 
-    // Flush metadata batches (ExifTool is called in batches, spec §9.5)
-    let mut idx = 0usize;
-    while idx < pending.len() {
+    // Flush the metadata batches left over when the walk finished.
+    while !pending.is_empty() {
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        let chunk: Vec<(PathBuf, MediaItem)> =
-            pending[idx..(idx + 100).min(pending.len())].to_vec();
-        idx += 100;
-        let paths: Vec<PathBuf> = chunk.iter().map(|(p, _)| p.clone()).collect();
-        let results = exif.read_batch(&paths);
-        let mut by_path: std::collections::HashMap<PathBuf, MediaMetadata> =
-            std::collections::HashMap::new();
-        for (p, r) in results {
-            match r {
-                Ok(m) => {
-                    by_path.insert(p, m);
-                }
-                Err(e) => {
-                    // video may still be readable through ffprobe; other errors are logged
-                    db::log_event(
-                        conn,
-                        job_id,
-                        LogLevel::Warn,
-                        "metadata",
-                        &format!("{}: {}", p.display(), e.friendly()),
-                    )?;
-                }
-            }
-        }
-        for (p, mut item) in chunk {
-            let mut m = by_path.remove(&p).unwrap_or_default();
-            let is_video = item.media_kind == MediaKind::Video;
-            if is_video {
-                if let Ok(Some(fm)) = ff.read(&p) {
-                    // EXIF/QuickTime date from ExifTool wins; ffprobe fills codecs/duration
-                    m = meta::merge_metadata(Some(m), Some(fm), None);
-                }
-            }
-            if m.width.is_none() && !is_video {
-                if let Ok(Some(nm)) = meta::NativeImage.read(&p) {
-                    m = meta::merge_metadata(Some(m), Some(nm), None);
-                }
-            }
-            let had_any =
-                m.captured.is_some() || m.geo.is_some() || m.width.is_some() || m.mime.is_some();
-            item.metadata_status = if had_any {
-                MetadataStatus::Ok
-            } else if exif.bin.is_none() {
-                MetadataStatus::Unavailable
-            } else {
-                MetadataStatus::Unsupported
-            };
-            if m.captured.is_none() {
-                item.date_status = DateStatus::Unknown;
-            }
-            fill_item_from_meta(&mut item, &m, opts.fs_date_fallback);
-            if item.date_status == DateStatus::NeedsReview {
-                item.metadata_status = MetadataStatus::NeedsReview;
-            }
-            db::upsert_media_item(&tx, &item)?;
-        }
-        progress.current = format!("метадані: {}/{idx}", pending.len());
+        let take = FLUSH_BATCH.min(pending.len());
+        let chunk: Vec<(PathBuf, MediaItem)> = pending.drain(..take).collect();
+        flush_batch(
+            conn,
+            &mut tx,
+            &exif,
+            &ff,
+            opts,
+            job_id,
+            &chunk,
+            &mut progress,
+        )?;
         tx.commit()?;
         tx = conn.unchecked_transaction()?;
         db::update_scan_progress(
@@ -554,6 +535,82 @@ pub fn count_media(root: &Path, opts: &ScanOptions) -> i64 {
                 )
         })
         .count() as i64
+}
+
+/// Metadata batch size: big enough to amortize the ExifTool call, small
+/// enough that progress ticks along smoothly.
+const FLUSH_BATCH: usize = 100;
+
+/// Read metadata for one batch of discovered files and persist the rows.
+/// `progress.processed` advances here only — the bar counts fully processed
+/// files, because users judge "done" by real work, not by discovery.
+#[allow(clippy::too_many_arguments)] // one wiring struct for 3 call sites would be heavier
+fn flush_batch(
+    conn: &Connection,
+    tx: &mut rusqlite::Transaction,
+    exif: &meta::ExifTool,
+    ff: &meta::Ffprobe,
+    opts: &ScanOptions,
+    job_id: &str,
+    chunk: &[(PathBuf, MediaItem)],
+    progress: &mut ScanProgress,
+) -> KResult<()> {
+    let paths: Vec<PathBuf> = chunk.iter().map(|(p, _)| p.clone()).collect();
+    let results = exif.read_batch(&paths);
+    let mut by_path: std::collections::HashMap<PathBuf, MediaMetadata> =
+        std::collections::HashMap::new();
+    for (p, r) in results {
+        match r {
+            Ok(m) => {
+                by_path.insert(p, m);
+            }
+            Err(e) => {
+                // video may still be readable through ffprobe; other errors are logged
+                db::log_event(
+                    conn,
+                    job_id,
+                    LogLevel::Warn,
+                    "metadata",
+                    &format!("{}: {}", p.display(), e.friendly()),
+                )?;
+            }
+        }
+    }
+    for (p, mut item) in chunk.iter().cloned() {
+        let mut m = by_path.remove(&p).unwrap_or_default();
+        let is_video = item.media_kind == MediaKind::Video;
+        if is_video {
+            if let Ok(Some(fm)) = ff.read(&p) {
+                // EXIF/QuickTime date from ExifTool wins; ffprobe fills codecs/duration
+                m = meta::merge_metadata(Some(m), Some(fm), None);
+            }
+        }
+        if m.width.is_none() && !is_video {
+            if let Ok(Some(nm)) = meta::NativeImage.read(&p) {
+                m = meta::merge_metadata(Some(m), Some(nm), None);
+            }
+        }
+        let had_any =
+            m.captured.is_some() || m.geo.is_some() || m.width.is_some() || m.mime.is_some();
+        item.metadata_status = if had_any {
+            MetadataStatus::Ok
+        } else if exif.bin.is_none() {
+            MetadataStatus::Unavailable
+        } else {
+            MetadataStatus::Unsupported
+        };
+        if m.captured.is_none() {
+            item.date_status = DateStatus::Unknown;
+        }
+        fill_item_from_meta(&mut item, &m, opts.fs_date_fallback);
+        if item.date_status == DateStatus::NeedsReview {
+            item.metadata_status = MetadataStatus::NeedsReview;
+        }
+        db::upsert_media_item(tx, &item)?;
+        progress.processed += 1;
+    }
+    progress.current = format!("метадані: {} з {}", progress.processed, progress.found);
+    Ok(())
 }
 
 /// Apple live photos and edit sidecars: a same-stem sibling file travels with
@@ -697,8 +754,9 @@ mod tests {
         let root1 = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
         let root2 = add_source_root(&conn, dir2.to_str().unwrap()).unwrap();
         let cancel = AtomicBool::new(false);
+        let expected_roots = [61, 5];
         for (i, root) in [&root1, &root2].into_iter().enumerate() {
-            scan_root(
+            let p = scan_root(
                 &conn,
                 root,
                 &ScanOptions::default(),
@@ -707,6 +765,8 @@ mod tests {
                 &|_| {},
             )
             .unwrap();
+            // processed must mean "fully processed (metadata included)", not "found"
+            assert_eq!(p.processed, expected_roots[i]);
         }
         assert_eq!(count_media(&dir, &ScanOptions::default()), 61);
         let (_, total) = query_media(&conn, &MediaFilter::default()).unwrap();
