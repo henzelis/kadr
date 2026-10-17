@@ -16,9 +16,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use walkdir::WalkDir;
 
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanOptions {
     pub follow_symlinks: bool,
@@ -82,6 +79,21 @@ pub fn normalize_path(p: &Path) -> String {
         s.to_lowercase()
     } else {
         s
+    }
+}
+
+fn mtime_secs(md: &std::fs::Metadata) -> i64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        md.mtime()
+    }
+    #[cfg(not(unix))]
+    {
+        md.modified()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH))
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
     }
 }
 
@@ -288,7 +300,7 @@ pub fn scan_root(
         let cached = load_cached_row(conn, &normalized);
         let fingerprint_fresh = cached
             .as_ref()
-            .map(|c| c.size_bytes == md.len() as i64 && c.mtime == md.mtime() as i64)
+            .map(|c| c.size_bytes == md.len() as i64 && c.mtime == mtime_secs(&md))
             .unwrap_or(false);
 
         let mut item = MediaItem {
@@ -303,7 +315,7 @@ pub fn scan_root(
             extension: ext.clone(),
             media_kind: kind,
             size_bytes: md.len() as i64,
-            mtime: md.mtime() as i64,
+            mtime: mtime_secs(&md),
             file_identity: file_identity(&md),
             sha256: cached.as_ref().and_then(|c| c.sha256.clone()),
             fingerprint_updated_at: Some(db::now_ms()),
