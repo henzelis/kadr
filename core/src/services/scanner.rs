@@ -91,7 +91,8 @@ fn mtime_secs(md: &std::fs::Metadata) -> i64 {
     #[cfg(not(unix))]
     {
         md.modified()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH))
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0)
     }
