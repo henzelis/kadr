@@ -15,6 +15,7 @@ pub mod persistence {
 }
 pub mod services {
     pub mod duplicate;
+    pub mod geocode;
     pub mod metadata;
     pub mod operation_runner;
     pub mod path_planner;

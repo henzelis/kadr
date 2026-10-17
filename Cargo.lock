@@ -1756,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "kadr"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "kadr-core",
  "rusqlite",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "kadr-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "image",

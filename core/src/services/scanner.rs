@@ -158,6 +158,10 @@ fn fill_item_from_meta(item: &mut MediaItem, m: &MediaMetadata, fs_date_fallback
             item.place_label = Some(t.clone());
             item.location_source = Some(LocationSource::Metadata);
             item.place_status = PlaceStatus::Resolved;
+        } else if let Some(label) = super::geocode::resolve(g.latitude, g.longitude) {
+            item.place_label = Some(label);
+            item.location_source = Some(LocationSource::Geocoder);
+            item.place_status = PlaceStatus::Resolved;
         } else {
             item.place_status = PlaceStatus::CoordsOnly;
             item.location_source = Some(LocationSource::None);

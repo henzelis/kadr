@@ -1,0 +1,18 @@
+Attribution notices
+===================
+
+GeoNames gazetteer (src-tauri/resources/geobase.tsv)
+----------------------------------------------------
+Includes modified data from GeoNames (https://www.geonames.org/) —
+cities500 and alternateNames datasets, licensed under CC-BY 4.0
+(https://creativecommons.org/licenses/by/4.0/).
+
+Place names are provided "as is"; attribution to GeoNames as the source.
+
+Bundled helper tools (Windows installers)
+-----------------------------------------
+ExifTool by Phil Harvey — Perl/Artistic or GPL dual license
+(https://exiftool.org/).
+FFprobe from BtbN FFmpeg builds (FFmpeg is LGPL/GPL, see
+https://www.ffmpeg.org/legal.html); we ship unmodified binaries built
+from the FFmpeg sources.
