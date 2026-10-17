@@ -767,6 +767,20 @@ pub fn update_plan_item_mode(conn: &Connection, plan_id: &str, mode: OperationMo
     Ok(())
 }
 
+/// Plans interrupted mid-apply: process crash leaves 'applying', user cancel
+/// leaves 'interrupted'. On startup the UI offers to resume or roll back.
+pub fn last_unfinished_plan(conn: &Connection) -> KResult<Option<(String, String, String)>> {
+    Ok(conn
+        .query_row(
+            "SELECT id, mode, state FROM operation_plan
+             WHERE state IN ('applying','interrupted')
+             ORDER BY created_at DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok())
+}
+
 pub fn set_plan_state(conn: &Connection, plan_id: &str, state: &str) -> KResult<()> {
     conn.execute(
         "UPDATE operation_plan SET state=?1 WHERE id=?2",

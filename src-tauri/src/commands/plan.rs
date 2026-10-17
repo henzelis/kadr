@@ -13,6 +13,41 @@ pub struct BuiltPlan {
     pub items: Vec<PlanItem>,
 }
 
+#[derive(serde::Serialize)]
+pub struct UnfinishedSort {
+    pub plan_id: String,
+    pub mode: String,
+    pub state: String,
+    pub done: i64,
+    pub failed: i64,
+    pub total: i64,
+}
+
+/// Recover-after-crash entry point: is there a half-applied sort waiting?
+#[tauri::command]
+pub fn get_unfinished_sort(state: State<AppState>) -> Result<Option<UnfinishedSort>, String> {
+    let conn = state.conn().map_err(err_str)?;
+    let Some((id, mode, st)) = db::last_unfinished_plan(&conn).map_err(err_str)? else {
+        return Ok(None);
+    };
+    let (done, failed, total) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(status='done'),0), COALESCE(SUM(status='failed'),0), COUNT(*)
+             FROM operation_item WHERE plan_id=?1",
+            rusqlite::params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap_or((0, 0, 0));
+    Ok(Some(UnfinishedSort {
+        plan_id: id,
+        mode,
+        state: st,
+        done,
+        failed,
+        total,
+    }))
+}
+
 #[tauri::command]
 pub fn build_sort_plan(state: State<AppState>, mode: Option<String>) -> Result<BuiltPlan, String> {
     if state.op_running.load(std::sync::atomic::Ordering::Relaxed) {

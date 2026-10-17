@@ -38,6 +38,7 @@ let thumbs = new Map<string, string>();
 let groups: MediaItem[][] = [];
 let plan: BuiltPlan | null = null;
 let applyProgress: ApplyProgress | null = null;
+let unfinished: Awaited<ReturnType<typeof api.getUnfinishedSort>> = null;
 let scanProgress: ScanProgress | null = null;
 let toasts: { msg: string; kind: string }[] = [];
 let logKey = 0;
@@ -102,6 +103,38 @@ function liveRefresh() {
       loadThumbs(page.items);
     } catch { /* ignore transient */ }
   }, 1200);
+}
+
+async function resumeUnfinished() {
+  if (!unfinished) return;
+  sortBusy = true;
+  try {
+    await api.applyPlan(unfinished.plan_id, true);
+    notify("Застосування продовжено", "ok");
+  } catch (e) {
+    notify(String(e), "err");
+  } finally {
+    sortBusy = false;
+    unfinished = null;
+    loadStats();
+    loadLibrary();
+  }
+}
+
+async function undoUnfinished() {
+  if (!unfinished) return;
+  sortBusy = true;
+  try {
+    await api.undoOperation(unfinished.plan_id);
+    notify("Перенесені файли повернуто", "ok");
+  } catch (e) {
+    notify(String(e), "err");
+  } finally {
+    sortBusy = false;
+    unfinished = null;
+    loadStats();
+    loadLibrary();
+  }
 }
 
 async function loadStats() {
@@ -315,6 +348,8 @@ function setTheme(t: string) {
 onMount(async () => {
   document.documentElement.dataset.theme = theme;
   try { version = await getVersion(); } catch { version = "0.4"; }
+  unfinished = await api.getUnfinishedSort().catch(() => null);
+
   await onScanProgress((p) => {
     scanProgress = p;
     if (p.finished) {
@@ -415,6 +450,16 @@ onMount(async () => {
       </div>
 
       <div class="scroll">
+        {#if unfinished && !scanRunning && !sortBusy}
+          <div class="banner warn" role="alert">
+            <span>⚠️ {unfinished.state === "applying"
+              ? "Сортування перервалось (закриття або збій програми)"
+              : "Сортування скасовано на півдорозі"}: перенесено {unfinished.done} з {unfinished.total}.</span>
+            <button class="btn primary" style="min-height:30px;font-size:11px" onclick={resumeUnfinished}>Продовжити</button>
+            <button class="btn secondary" style="min-height:30px;font-size:11px" onclick={undoUnfinished}>Повернути все назад</button>
+            <button class="edit-text" onclick={() => (unfinished = null)}>залишити як є</button>
+          </div>
+        {/if}
         {#if scanRunning && scanProgress}
           <div class="scan-card">
             <div class="scan-head"><span class="spin">◌</span>

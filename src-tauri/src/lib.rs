@@ -50,6 +50,7 @@ pub fn run() {
             commands::metadata::set_date_override,
             commands::plan::build_sort_plan,
             commands::plan::get_sort_plan,
+            commands::plan::get_unfinished_sort,
             commands::plan::update_plan_item,
             commands::plan::exclude_plan_item,
             commands::plan::set_plan_mode,

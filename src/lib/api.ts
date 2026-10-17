@@ -134,6 +134,11 @@ export const api = {
     invoke<void>("set_manual_place", { mediaIds, place }),
   setDateOverride: (id: string, date: string) => invoke<void>("set_date_override", { id, date }),
   buildPlan: (mode?: string) => invoke<BuiltPlan>("build_sort_plan", { mode: mode ?? null }),
+  getUnfinishedSort: () =>
+    invoke<null | {
+      plan_id: string; mode: string; state: string;
+      done: number; failed: number; total: number;
+    }>("get_unfinished_sort"),
   getPlan: (planId: string) =>
     invoke<[PlanItem[], PlanSummary]>("get_sort_plan", { planId }),
   updatePlanItem: (planId: string, itemId: string, place?: string, date?: string) =>
