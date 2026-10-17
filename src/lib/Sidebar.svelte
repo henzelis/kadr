@@ -1,6 +1,6 @@
 <script lang="ts">
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, type AppSettings, type ScanProgress, type SourceRoot } from "./api";
+import { api, scanPercent, type AppSettings, type ScanProgress, type SourceRoot } from "./api";
 
 export let view: string;
 export let stats: Record<string, number>;
@@ -41,11 +41,12 @@ async function changeDest() {
   } catch { /* покаже toast з App */ }
 }
 
+// One formula for the whole app (see api.scanPercent) — no separate math here.
 function scanPct(): number {
   const p = scanProgress;
-  if (!p || p.finished) return stats.total ? 100 : 0;
-  const done = p.processed + p.skipped;
-  return p.total > 0 ? Math.min(99, Math.round((done * 100) / p.total)) : 0;
+  if (!p) return stats.total ? 100 : 0;
+  if (p.finished) return p.cancelled ? Math.min(100, scanPercent(p)) : 100;
+  return scanPercent(p);
 }
 </script>
 

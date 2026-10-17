@@ -608,7 +608,9 @@ fn flush_batch(
                                 m = meta::merge_metadata(Some(m), Some(fm), None);
                             }
                         }
-                        if m.width.is_none() && !is_video {
+                        if !is_video
+                            && (m.width.is_none() || m.captured.is_none() || m.geo.is_none())
+                        {
                             if let Ok(Some(nm)) = meta::NativeImage.read(&p) {
                                 m = meta::merge_metadata(Some(m), Some(nm), None);
                             }

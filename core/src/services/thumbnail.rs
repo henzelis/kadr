@@ -136,6 +136,7 @@ impl ThumbService {
 fn exiftool_preview(path: &Path) -> Option<Vec<u8>> {
     let bin = crate::services::metadata::ExifTool::new().bin?;
     let mut cmd = Command::new(bin);
+    crate::services::metadata::no_window(&mut cmd);
     cmd.args(["-b", "-ThumbnailImage", "-EmbeddedImage", "-PreviewImage"])
         .arg(path);
     let (status, stdout, _) =

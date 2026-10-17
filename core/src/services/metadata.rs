@@ -73,7 +73,7 @@ fn locate(bin: &str) -> Option<String> {
 
 /// GUI apps on Windows flash a console window for every spawned child —
 /// CREATE_NO_WINDOW keeps ExifTool/FFprobe silent even across thousands of calls.
-fn no_window(cmd: &mut Command) {
+pub(crate) fn no_window(cmd: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -593,26 +593,105 @@ pub fn parse_ffprobe_json(text: &str) -> KResult<MediaMetadata> {
 
 pub struct NativeImage;
 
+/// Built-in EXIF reader (kamadak-exif): JPEG, TIFF-based RAW, HEIF/AVIF and
+/// PNG get dates + GPS even when ExifTool is missing or fails on a file.
+/// Same tag priority as exiftool_to_metadata, just a narrower tag set.
 impl MetadataReader for NativeImage {
     fn name(&self) -> &'static str {
-        "native-image"
+        "native-exif"
     }
     fn is_available(&self) -> bool {
         true
     }
     fn read(&self, path: &Path) -> KResult<Option<MediaMetadata>> {
-        let reader = image::ImageReader::open(path)
-            .map_err(|e| KadrError::user_detail("Не вдалося відкрити зображення", e.to_string()))?
-            .with_guessed_format()
-            .map_err(|e| KadrError::user_detail("Не вдалося визначити формат", e.to_string()))?;
-        let (w, h) = reader
-            .into_dimensions()
-            .map_err(|e| KadrError::user_detail("Не вдалося прочитати розміри", e.to_string()))?;
-        Ok(Some(MediaMetadata {
-            width: Some(w),
-            height: Some(h),
-            ..Default::default()
-        }))
+        let mut m = MediaMetadata::default();
+
+        if let Ok(file) = std::fs::File::open(path) {
+            let mut br = std::io::BufReader::new(file);
+            if let Ok(ex) = exif::Reader::new().read_from_container(&mut br) {
+                use exif::{In, Tag, Value};
+                let ascii = |t: Tag| -> Option<String> {
+                    let f = ex.get_field(t, In::PRIMARY)?;
+                    match &f.value {
+                        Value::Ascii(parts) => parts
+                            .first()
+                            .map(|b| String::from_utf8_lossy(b).trim().to_owned())
+                            .filter(|s| !s.is_empty()),
+                        _ => None,
+                    }
+                };
+                let dms = |t: Tag, rt: Tag, neg: &[u8]| -> Option<f64> {
+                    let Value::Rational(parts) = &ex.get_field(t, In::PRIMARY)?.value else {
+                        return None;
+                    };
+                    let deg = parts.first()?.to_f64()
+                        + parts.get(1).map(|r| r.to_f64() / 60.0).unwrap_or(0.0)
+                        + parts.get(2).map(|r| r.to_f64() / 3600.0).unwrap_or(0.0);
+                    let neg = ex
+                        .get_field(rt, In::PRIMARY)
+                        .and_then(|f| match &f.value {
+                            Value::Ascii(p) => p.first().and_then(|v| v.first()).copied(),
+                            _ => None,
+                        })
+                        .map(|b| neg.contains(&b.to_ascii_lowercase()))
+                        .unwrap_or(false);
+                    Some(if neg { -deg } else { deg })
+                };
+
+                if let Some(raw) = ascii(Tag::DateTimeOriginal) {
+                    let off = ascii(Tag::OffsetTimeOriginal).or_else(|| ascii(Tag::OffsetTime));
+                    m.captured = Some(captured_date::from_exif(&raw, off.as_deref()));
+                } else if let Some(raw) = ascii(Tag::DateTimeDigitized) {
+                    let mut cd = captured_date::from_exif(&raw, None);
+                    cd.normalization_note =
+                        Some("Використано вторинне EXIF-поле дати (native)".into());
+                    m.captured = Some(cd);
+                }
+
+                if let (Some(la), Some(lo)) = (
+                    dms(Tag::GPSLatitude, Tag::GPSLatitudeRef, b"Ss"),
+                    dms(Tag::GPSLongitude, Tag::GPSLongitudeRef, b"Ww"),
+                ) {
+                    let alt =
+                        ex.get_field(Tag::GPSAltitude, In::PRIMARY)
+                            .and_then(|f| match &f.value {
+                                Value::Rational(v) => v.first().map(|r| r.to_f64()),
+                                _ => None,
+                            });
+                    let p = GeoPoint {
+                        latitude: la,
+                        longitude: lo,
+                        altitude: alt,
+                    };
+                    if p.valid() {
+                        m.geo = Some(p);
+                    }
+                }
+            }
+        }
+
+        if m.width.is_none() {
+            let reader = image::ImageReader::open(path)
+                .map_err(|e| {
+                    KadrError::user_detail("Не вдалося відкрити зображення", e.to_string())
+                })?
+                .with_guessed_format()
+                .map_err(|e| {
+                    KadrError::user_detail("Не вдалося визначити формат", e.to_string())
+                })?;
+            if let Ok((w, h)) = reader.into_dimensions() {
+                m.width = Some(w);
+                m.height = Some(h);
+            }
+        }
+
+        Ok(
+            if m.captured.is_some() || m.geo.is_some() || m.width.is_some() {
+                Some(m)
+            } else {
+                None
+            },
+        )
     }
 }
 

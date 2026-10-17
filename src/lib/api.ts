@@ -156,6 +156,15 @@ export const onScanProgress = (cb: (p: ScanProgress) => void) =>
 export const onApplyProgress = (cb: (p: ApplyProgress) => void) =>
   listen<ApplyProgress>("apply-progress", (e) => cb(e.payload));
 
+/** THE single source of truth for scan progress percent.
+ * done = fully processed (metadata persisted) + intentionally skipped,
+ * denominator = pre-count of supported media. Cap 100 only at real finish. */
+export function scanPercent(p: ScanProgress | null): number {
+  if (!p || p.total <= 0) return 0;
+  const done = p.processed + p.skipped;
+  return Math.min(100, Math.round((done * 100) / p.total));
+}
+
 export function fmtBytes(n: number): string {
   if (!n) return "0 Б";
   const u = ["Б", "КБ", "МБ", "ГБ", "ТБ"];

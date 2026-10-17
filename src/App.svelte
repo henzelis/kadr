@@ -4,7 +4,7 @@ import { onMount } from "svelte";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import {
-  api, fmtBytes, fmtDate,
+  api, fmtBytes, fmtDate, scanPercent,
   onScanProgress, onApplyProgress,
   type AppSettings, type ApplyProgress, type BuiltPlan,
   type MediaFilter, type MediaItem, type ScanProgress, type SourceRoot, type ToolStatus,
@@ -88,6 +88,22 @@ async function loadLibrary(append = false) {
     notify(String(e), "err");
   }
 }
+let liveTimer: ReturnType<typeof setTimeout> | undefined;
+function liveRefresh() {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(async () => {
+    await loadStats();
+    if (!["library", "review", "nodate", "nogeo"].includes(view)) return;
+    try {
+      const page = await api.queryMedia({ ...currentFilter(), limit: PAGE, offset: 0 });
+      items = page.items;
+      total = page.total;
+      offset = items.length;
+      loadThumbs(page.items);
+    } catch { /* ignore transient */ }
+  }, 1200);
+}
+
 async function loadStats() {
   try { stats = (await api.stats()) as unknown as Record<string, number>; } catch {}
 }
@@ -157,12 +173,7 @@ let sortBusy = false;
 let sortConfirm = false;
 let sortedDone = false;
 $: scanRunning = !!scanProgress && !scanProgress.finished;
-$: scanPctV = (() => {
-  const p = scanProgress;
-  if (!p) return 0;
-  const done = p.processed + p.skipped;
-  return p.total > 0 ? Math.min(100, Math.round((done * 100) / p.total)) : 0;
-})();
+$: scanPctV = scanPercent(scanProgress);
 $: scanEta = (() => {
   const p = scanProgress;
   if (!p || p.finished || p.total <= 0) return "";
@@ -311,6 +322,10 @@ onMount(async () => {
       else notify(`Сканування завершено: ${p.processed} файлів`, "ok");
       loadStats();
       loadLibrary();
+    } else {
+      // Live gallery: the media grid and counters must fill in WHILE scanning,
+      // not only at the end (user asked for parity with the reference impl).
+      liveRefresh();
     }
   });
   await onApplyProgress((p) => {
