@@ -14,5 +14,5 @@ export default defineConfig({
     hmr: host ? { protocol: "ws", host, port: 1421 } : undefined,
     watch: { ignored: ["**/src-tauri/**"] },
   },
-  build: { outDir: "dist", target: "es2022" },
+  build: { outDir: "build", target: "es2022" },
 });
