@@ -539,11 +539,25 @@ pub fn count_media(root: &Path, opts: &ScanOptions) -> i64 {
 
 /// Metadata batch size: big enough to amortize the ExifTool call, small
 /// enough that progress ticks along smoothly.
-const FLUSH_BATCH: usize = 100;
+const FLUSH_BATCH: usize = 200;
 
 /// Read metadata for one batch of discovered files and persist the rows.
 /// `progress.processed` advances here only — the bar counts fully processed
 /// files, because users judge "done" by real work, not by discovery.
+/// How many helper processes read one batch in parallel. Metadata reading is
+/// process-spawn + file IO bound, so a few concurrent ExifTool runs multiply
+/// throughput (learned from a parallel-worker implementation; Windows
+/// defenders make serial spawns especially expensive).
+fn meta_workers() -> usize {
+    static W: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *W.get_or_init(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2)
+            .clamp(1, 4)
+    })
+}
+
 #[allow(clippy::too_many_arguments)] // one wiring struct for 3 call sites would be heavier
 fn flush_batch(
     conn: &Connection,
@@ -555,41 +569,74 @@ fn flush_batch(
     chunk: &[(PathBuf, MediaItem)],
     progress: &mut ScanProgress,
 ) -> KResult<()> {
-    let paths: Vec<PathBuf> = chunk.iter().map(|(p, _)| p.clone()).collect();
-    let results = exif.read_batch(&paths);
-    let mut by_path: std::collections::HashMap<PathBuf, MediaMetadata> =
-        std::collections::HashMap::new();
-    for (p, r) in results {
-        match r {
-            Ok(m) => {
-                by_path.insert(p, m);
-            }
-            Err(e) => {
-                // video may still be readable through ffprobe; other errors are logged
-                db::log_event(
-                    conn,
-                    job_id,
-                    LogLevel::Warn,
-                    "metadata",
-                    &format!("{}: {}", p.display(), e.friendly()),
-                )?;
+    // Read metadata for all files in the batch using a few parallel helper
+    // processes; persistence stays on this thread (single SQLite conn).
+    let workers = meta_workers().min(chunk.len().div_ceil(25).max(1));
+    let slice = chunk.len().div_ceil(workers);
+    let mut merged: std::collections::HashMap<PathBuf, MediaMetadata> = std::thread::scope(|s| {
+        let handles: Vec<_> = chunk
+            .chunks(slice)
+            .map(|sl| {
+                let files: Vec<PathBuf> = sl.iter().map(|(p, _)| p.clone()).collect();
+                let kinds: Vec<MediaKind> = sl.iter().map(|(_, i)| i.media_kind).collect();
+                s.spawn(move || {
+                    let mut out = Vec::with_capacity(files.len());
+                    let mut errs: Vec<(PathBuf, String)> = Vec::new();
+                    let results = exif.read_batch(&files);
+                    let mut by_path: std::collections::HashMap<PathBuf, MediaMetadata> =
+                        std::collections::HashMap::new();
+                    for (p, r) in results {
+                        match r {
+                            Ok(m) => {
+                                by_path.insert(p, m);
+                            }
+                            Err(e) => {
+                                // video may still be readable through ffprobe; other errors are logged
+                                errs.push((p.clone(), e.friendly().to_string()));
+                            }
+                        }
+                    }
+                    for (p, kind) in files.into_iter().zip(kinds) {
+                        let mut m = by_path.remove(&p).unwrap_or_default();
+                        let is_video = kind == MediaKind::Video;
+                        if is_video {
+                            if let Ok(Some(fm)) = ff.read(&p) {
+                                // EXIF/QuickTime date from ExifTool wins; ffprobe fills codecs/duration
+                                m = meta::merge_metadata(Some(m), Some(fm), None);
+                            }
+                        }
+                        if m.width.is_none() && !is_video {
+                            if let Ok(Some(nm)) = meta::NativeImage.read(&p) {
+                                m = meta::merge_metadata(Some(m), Some(nm), None);
+                            }
+                        }
+                        out.push((p, m));
+                    }
+                    (out, errs)
+                })
+            })
+            .collect();
+        let mut acc = std::collections::HashMap::new();
+        for h in handles {
+            if let Ok((out, errs)) = h.join() {
+                for (p, msg) in errs {
+                    let _ = db::log_event(
+                        conn,
+                        job_id,
+                        LogLevel::Warn,
+                        "metadata",
+                        &format!("{}: {}", p.display(), msg),
+                    );
+                }
+                for (p, m) in out {
+                    acc.insert(p, m);
+                }
             }
         }
-    }
+        acc
+    });
     for (p, mut item) in chunk.iter().cloned() {
-        let mut m = by_path.remove(&p).unwrap_or_default();
-        let is_video = item.media_kind == MediaKind::Video;
-        if is_video {
-            if let Ok(Some(fm)) = ff.read(&p) {
-                // EXIF/QuickTime date from ExifTool wins; ffprobe fills codecs/duration
-                m = meta::merge_metadata(Some(m), Some(fm), None);
-            }
-        }
-        if m.width.is_none() && !is_video {
-            if let Ok(Some(nm)) = meta::NativeImage.read(&p) {
-                m = meta::merge_metadata(Some(m), Some(nm), None);
-            }
-        }
+        let m = merged.remove(&p).unwrap_or_default();
         let had_any =
             m.captured.is_some() || m.geo.is_some() || m.width.is_some() || m.mime.is_some();
         item.metadata_status = if had_any {
@@ -853,5 +900,47 @@ mod tests {
         );
         assert_eq!(p.processed, total);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Dev bench (ignored): scans a 3000-file EXIF tree, prints wall time.
+    /// Run: cargo test --release scan_bench -- --ignored --nocapture
+    #[test]
+    #[ignore = "dev bench, needs /tmp/demo-photos EXIF files"]
+    fn scan_bench_3000() {
+        let demo = std::path::Path::new("/tmp/demo-photos");
+        let Ok(samples) = std::fs::read_dir(demo) else {
+            eprintln!("bench skipped: /tmp/demo-photos missing");
+            return;
+        };
+        let samples: Vec<std::path::PathBuf> = samples
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().map(|e| e == "jpg").unwrap_or(false))
+            .collect();
+        assert!(!samples.is_empty());
+        let dir = std::env::temp_dir().join(format!("kadr-bench-{}", uuid::Uuid::new_v4()));
+        let mut n = 0;
+        for f in 0..3000 {
+            let d = dir.join(format!("y{}/m{:02}/s{}", f / 50, (f / 10) % 5, f % 10));
+            fs::create_dir_all(&d).unwrap();
+            let s = &samples[f % samples.len()];
+            fs::copy(s, d.join(format!("photo_{f:04}.jpg"))).unwrap();
+            n += 1;
+        }
+        let conn = db::open_db(":memory:").unwrap();
+        let root = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
+        let cancel = AtomicBool::new(false);
+        let opts = ScanOptions::default();
+        let t0 = std::time::Instant::now();
+        let p = scan_root(&conn, &root, &opts, "bench", &cancel, &|_| {}).unwrap();
+        let dt = t0.elapsed();
+        eprintln!(
+            "BENCH: found={} processed={} in {:.2}s ({:.0} files/s)",
+            p.found,
+            p.processed,
+            dt.as_secs_f64(),
+            p.found as f64 / dt.as_secs_f64()
+        );
+        assert_eq!(p.found, n);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
