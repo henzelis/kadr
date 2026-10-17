@@ -2,7 +2,9 @@
 //! zero filesystem modifications (TECHNICAL_SPEC §11 Plan, §8 rules).
 
 use crate::domain::captured_date::DateStatus;
-use crate::domain::operation::{ConflictPolicy, OperationMode, PlanItem, PlanItemStatus, PlanSummary, PlanWarning};
+use crate::domain::operation::{
+    ConflictPolicy, OperationMode, PlanItem, PlanItemStatus, PlanSummary, PlanWarning,
+};
 use crate::domain::sort_template::{build_dest_segments, TemplateConfig};
 use crate::errors::{KResult, KadrError};
 use chrono::{Datelike, NaiveDateTime};
@@ -24,7 +26,8 @@ pub struct PlanOptions {
 pub fn is_inside_root(root: &str, dest: &Path) -> bool {
     let dest_norm = crate::services::scanner::normalize_path(dest);
     let root_norm = crate::services::scanner::normalize_path(Path::new(root));
-    dest_norm == root_norm || dest_norm.starts_with(&format!("{root_norm}{}", std::path::MAIN_SEPARATOR))
+    dest_norm == root_norm
+        || dest_norm.starts_with(&format!("{root_norm}{}", std::path::MAIN_SEPARATOR))
 }
 
 fn path_is_safe_abs(p: &Path) -> bool {
@@ -36,9 +39,14 @@ fn parse_local(s: Option<&String>) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok()
 }
 
-pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec<PlanItem>, PlanSummary)> {
+pub fn build_plan(
+    conn: &Connection,
+    opts: &PlanOptions,
+) -> KResult<(String, Vec<PlanItem>, PlanSummary)> {
     if opts.destination_root.trim().is_empty() {
-        return Err(KadrError::user("Не вибрано папку архіву. Відкрийте Налаштування та вкажіть цільову теку."));
+        return Err(KadrError::user(
+            "Не вибрано папку архіву. Відкрийте Налаштування та вкажіть цільову теку.",
+        ));
     }
     let dest_root = Path::new(&opts.destination_root);
     if !path_is_safe_abs(dest_root) {
@@ -60,8 +68,11 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
                 crate::persistence::db::MEDIA_COLS,
                 ids.iter().map(|_| "?").collect::<Vec<_>>().join(",")
             ))?;
-            let mut mapped = stmt.query_map(rusqlite::params_from_iter(ids.iter()), crate::persistence::db::row_to_media)?;
-            while let Some(r) = mapped.next() {
+            let mapped = stmt.query_map(
+                rusqlite::params_from_iter(ids.iter()),
+                crate::persistence::db::row_to_media,
+            )?;
+            for r in mapped {
                 out.push(r?);
             }
             out
@@ -72,8 +83,8 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
                 crate::persistence::db::MEDIA_COLS
             ))?;
             let mut out = Vec::new();
-            let mut mapped = stmt.query_map([], crate::persistence::db::row_to_media)?;
-            while let Some(r) = mapped.next() {
+            let mapped = stmt.query_map([], crate::persistence::db::row_to_media)?;
+            for r in mapped {
                 out.push(r?);
             }
             out
@@ -126,7 +137,9 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
                     code: "unknown_date".into(),
                     message: match m.date_status {
                         DateStatus::NeedsReview => "Дата суперечлива — потрібна перевірка".into(),
-                        DateStatus::Fallback => "Дата взята з файлової системи (не підтверджена)".into(),
+                        DateStatus::Fallback => {
+                            "Дата взята з файлової системи (не підтверджена)".into()
+                        }
                         _ => "Надійну дату не знайдено".into(),
                     },
                 });
@@ -141,7 +154,9 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
                 message: "Місце не визначено".into(),
             });
         }
-        if m.date_status == DateStatus::NeedsReview || m.place_status == crate::domain::location::PlaceStatus::NeedsReview {
+        if m.date_status == DateStatus::NeedsReview
+            || m.place_status == crate::domain::location::PlaceStatus::NeedsReview
+        {
             warnings.push(PlanWarning {
                 code: "needs_review".into(),
                 message: "Частина метаданих потребує перевірки".into(),
@@ -184,7 +199,8 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
                     });
                     warnings.push(PlanWarning {
                         code: "conflict".into(),
-                        message: "Назву файлу адаптировано суфіксом, щоб нічого не перезаписати".into(),
+                        message: "Назву файлу адаптировано суфіксом, щоб нічого не перезаписати"
+                            .into(),
                     });
                     summary.conflicts += 1;
                     unique
@@ -254,8 +270,11 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
                 crate::persistence::db::MEDIA_COLS
             ))?;
             let mut out = Vec::new();
-            let mut mapped = stmt.query_map(rusqlite::params![m.id], crate::persistence::db::row_to_media)?;
-            while let Some(r) = mapped.next() {
+            let mapped = stmt.query_map(
+                rusqlite::params![m.id],
+                crate::persistence::db::row_to_media,
+            )?;
+            for r in mapped {
                 out.push(r?);
             }
             out
@@ -268,7 +287,11 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
                 opts.template.target_os,
                 opts.template.max_segment_len,
             );
-            let seg = if seg.is_empty() { c.file_name.clone() } else { seg };
+            let seg = if seg.is_empty() {
+                c.file_name.clone()
+            } else {
+                seg
+            };
             cdest.push(&seg);
             let mut cdest_str = cdest.to_string_lossy().to_string();
             if used_dests.contains(&cdest_str) || Path::new(&cdest_str).exists() {
@@ -322,7 +345,6 @@ pub fn build_plan(conn: &Connection, opts: &PlanOptions) -> KResult<(String, Vec
     Ok((plan_id, plan_items, summary))
 }
 
-
 /// Recompute one item's destination after the user edits place/date,
 /// validating containment the same way as the full plan.
 pub fn recompute_item_dest(
@@ -360,13 +382,21 @@ pub fn recompute_item_dest(
         }
         None => {
             let dt = parse_local(media.captured_at_local.as_ref());
-            match (matches!(media.date_status, DateStatus::Confirmed | DateStatus::Fallback), dt) {
+            match (
+                matches!(
+                    media.date_status,
+                    DateStatus::Confirmed | DateStatus::Fallback
+                ),
+                dt,
+            ) {
                 (true, Some(dt)) => Some((dt.year(), dt.month())),
                 _ => None,
             }
         }
     };
-    let place = new_place.filter(|s| !s.trim().is_empty()).or(media.place_label.as_deref());
+    let place = new_place
+        .filter(|s| !s.trim().is_empty())
+        .or(media.place_label.as_deref());
     let coords_label = match (media.latitude, media.longitude) {
         (Some(la), Some(lo)) => Some(format!("{la:.5}, {lo:.5}")),
         _ => None,
@@ -385,7 +415,9 @@ pub fn recompute_item_dest(
         dest.push(s);
     }
     if !is_inside_root(&meta.1, &dest) {
-        return Err(KadrError::user("Нова назва місця виводила б файл за межі папки архіву"));
+        return Err(KadrError::user(
+            "Нова назва місця виводила б файл за межі папки архіву",
+        ));
     }
     let dest_str = dest.to_string_lossy().to_string();
     crate::persistence::db::update_plan_item_destination(conn, item_id, &dest_str)?;
@@ -440,7 +472,7 @@ mod tests {
         let (items, _) = query_media(&conn, &MediaFilter::default()).unwrap();
         let jpg = items.iter().find(|i| i.extension == "jpg").unwrap();
         set_manual_date(&conn, &jpg.id, "2025-08-12 14:03:22").unwrap();
-        set_manual_place(&conn, &[jpg.id.clone()], "Карпати").unwrap();
+        set_manual_place(&conn, std::slice::from_ref(&jpg.id), "Карпати").unwrap();
 
         let (pid, plan, summary) = build_plan(
             &conn,
@@ -454,11 +486,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(summary.total, 2);
-        let jpg_item = plan.iter().find(|p| p.source_path.ends_with("a.jpg")).unwrap();
+        let jpg_item = plan
+            .iter()
+            .find(|p| p.source_path.ends_with("a.jpg"))
+            .unwrap();
         let np = normalize_path(Path::new(&jpg_item.destination_path));
-        let expect = normalize_path(Path::new(&dest.join("2025").join("08 - Серпень").join("Карпати").join("a.jpg")));
+        let expect = normalize_path(Path::new(
+            &dest
+                .join("2025")
+                .join("08 - Серпень")
+                .join("Карпати")
+                .join("a.jpg"),
+        ));
         assert_eq!(np, expect);
-        let mov_item = plan.iter().find(|p| p.source_path.ends_with("b.mov")).unwrap();
+        let mov_item = plan
+            .iter()
+            .find(|p| p.source_path.ends_with("b.mov"))
+            .unwrap();
         assert!(mov_item.destination_path.contains("Невідома дата"));
         assert!(mov_item.destination_path.contains("Без геолокації"));
         // plan wrote nothing to the filesystem
@@ -471,7 +515,13 @@ mod tests {
         let (conn, dest, _) = fixture();
         // pre-create an existing file at one planned destination
         fs::create_dir_all(dest.join("Невідома дата").join("Без геолокації")).unwrap();
-        fs::write(dest.join("Невідома дата").join("Без геолокації").join("b.mov"), b"existing").unwrap();
+        fs::write(
+            dest.join("Невідома дата")
+                .join("Без геолокації")
+                .join("b.mov"),
+            b"existing",
+        )
+        .unwrap();
         let (_pid, plan, summary) = build_plan(
             &conn,
             &PlanOptions {
@@ -484,7 +534,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(summary.conflicts, 1);
-        let mov = plan.iter().find(|p| p.source_path.ends_with("b.mov")).unwrap();
+        let mov = plan
+            .iter()
+            .find(|p| p.source_path.ends_with("b.mov"))
+            .unwrap();
         assert!(mov.destination_path.ends_with("b (1).mov"));
     }
 
@@ -518,19 +571,63 @@ mod tests {
             },
         )
         .unwrap();
-        let item = plan.iter().find(|p| p.source_path.ends_with("a.jpg")).unwrap();
+        let item = plan
+            .iter()
+            .find(|p| p.source_path.ends_with("a.jpg"))
+            .unwrap();
         // traversal attempt must be blocked or sanitized
         let res = recompute_item_dest(&conn, &pid, &item.id, Some("../../etc/passwd"), None);
-        match res {
-            Ok(new_dest) => {
-                assert!(is_inside_root(&dest.to_string_lossy(), Path::new(&new_dest)));
-            }
-            Err(_) => {}
+        if let Ok(new_dest) = res {
+            assert!(is_inside_root(
+                &dest.to_string_lossy(),
+                Path::new(&new_dest)
+            ));
         }
         // normal override works
-        let nd = recompute_item_dest(&conn, &pid, &item.id, Some("Львів"), Some("2024-03-01 10:00:00")).unwrap();
+        let nd = recompute_item_dest(
+            &conn,
+            &pid,
+            &item.id,
+            Some("Львів"),
+            Some("2024-03-01 10:00:00"),
+        )
+        .unwrap();
         assert!(nd.contains("2024"));
         assert!(nd.contains("03 - Березень"));
         assert!(nd.contains("Львів"));
+    }
+
+    #[test]
+    fn manual_place_cannot_escape_destination_root() {
+        // §18.18: a hostile place label must never take the file outside the archive root.
+        let (conn, dest, _) = fixture();
+        let (items, _) = query_media(&conn, &MediaFilter::default()).unwrap();
+        let target = items.iter().find(|m| m.file_name == "a.jpg").unwrap();
+        set_manual_place(
+            &conn,
+            std::slice::from_ref(&target.id),
+            "../../evil/../../x",
+        )
+        .unwrap();
+        let (_pid, plan, _summary) = build_plan(
+            &conn,
+            &PlanOptions {
+                destination_root: dest.to_string_lossy().to_string(),
+                template: tc(),
+                mode: OperationMode::Copy,
+                conflict: ConflictPolicy::Suffix,
+                media_ids: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(plan.len(), 2);
+        for it in &plan {
+            let d = std::path::Path::new(&it.destination_path);
+            assert!(d.starts_with(&dest), "destination escapes root: {d:?}");
+            assert!(
+                d.components().all(|c| c != std::path::Component::ParentDir),
+                "traversal component in {it:?}"
+            );
+        }
     }
 }

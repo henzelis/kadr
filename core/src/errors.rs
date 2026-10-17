@@ -61,6 +61,9 @@ pub type KResult<T> = Result<T, KadrError>;
 
 impl From<serde_json::Error> for KadrError {
     fn from(e: serde_json::Error) -> Self {
-        KadrError::user_detail("Не вдалося обробити відповідь інструменту метаданих", e.to_string())
+        KadrError::user_detail(
+            "Не вдалося обробити відповідь інструменту метаданих",
+            e.to_string(),
+        )
     }
 }

@@ -18,7 +18,10 @@ pub fn query_media(state: State<AppState>, filter: MediaFilter) -> Result<MediaP
 }
 
 #[tauri::command]
-pub fn get_media_details(state: State<AppState>, id: String) -> Result<Option<kadr_core::domain::media_item::MediaItem>, String> {
+pub fn get_media_details(
+    state: State<AppState>,
+    id: String,
+) -> Result<Option<kadr_core::domain::media_item::MediaItem>, String> {
     let conn = state.conn().map_err(err_str)?;
     db::get_media_item(&conn, &id).map_err(err_str)
 }
@@ -27,7 +30,10 @@ pub fn get_media_details(state: State<AppState>, id: String) -> Result<Option<ka
 #[tauri::command]
 pub fn get_thumbnail_base64(state: State<AppState>, id: String) -> Result<Option<String>, String> {
     let conn = state.conn().map_err(err_str)?;
-    let path = state.thumbs.thumbnail_for(&conn, &id).ok_or("Немає мініатюри")?;
+    let path = state
+        .thumbs
+        .thumbnail_for(&conn, &id)
+        .ok_or("Немає мініатюри")?;
     let bytes = std::fs::read(&path).map_err(|_| "Немає мініатюри".to_string())?;
     Ok(Some(to_base64(&bytes)))
 }
@@ -57,7 +63,9 @@ fn to_base64(data: &[u8]) -> String {
 }
 
 #[tauri::command]
-pub fn duplicate_groups(state: State<AppState>) -> Result<Vec<Vec<kadr_core::domain::media_item::MediaItem>>, String> {
+pub fn duplicate_groups(
+    state: State<AppState>,
+) -> Result<Vec<Vec<kadr_core::domain::media_item::MediaItem>>, String> {
     let conn = state.conn().map_err(err_str)?;
     duplicate::duplicate_groups(&conn).map_err(err_str)
 }

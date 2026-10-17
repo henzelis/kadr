@@ -135,7 +135,7 @@ async function gotoPlan() {
   if (!plan) await buildPlan();
 }
 
-function select(m: MediaItem, e: MouseEvent) {
+function select(m: MediaItem, e: MouseEvent | KeyboardEvent) {
   if (e.ctrlKey || e.metaKey) {
     if (selection.has(m.id)) selection.delete(m.id);
     else selection.add(m.id);
@@ -396,7 +396,7 @@ function loadMore() {
             </div>
             <div class="field">
               <label>Місце ({selected.location_source ?? "немає"} · {selected.place_status})</label>
-              {#if selected.latitude != null}
+              {#if selected.latitude != null && selected.longitude != null}
                 <span class="val">◎ GPS: {selected.latitude.toFixed(5)}, {selected.longitude.toFixed(5)}
                   {#if selected.altitude != null}(↑{selected.altitude} м){/if}</span>
               {/if}

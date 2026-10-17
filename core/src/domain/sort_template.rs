@@ -128,7 +128,7 @@ pub fn parse_template(t: &str) -> Result<Vec<Token>, String> {
     let last_meaningful = tokens
         .iter()
         .rev()
-        .find(|t| !matches!(t, Token::Literal(s) if s.trim_matches('/') == ""));
+        .find(|t| !matches!(t, Token::Literal(s) if s.trim_matches('/').is_empty()));
     match last_meaningful {
         Some(Token::Filename) => Ok(tokens),
         _ => Err("шаблон повинен завершуватися змінною {filename}".into()),
@@ -166,7 +166,13 @@ pub fn sanitize_segment(seg: &str, os: TargetOs, max_len: usize) -> String {
     // any remaining dot-dot component becomes literal dots-with-space
     let parts: Vec<String> = replaced
         .split_whitespace()
-        .map(|w| if w == ".." || w == "." { format!("_{w}_") } else { w.to_string() })
+        .map(|w| {
+            if w == ".." || w == "." {
+                format!("_{w}_")
+            } else {
+                w.to_string()
+            }
+        })
         .collect();
     let mut s = parts.join(" ");
     s = s.trim().trim_matches('.').trim().to_string();
@@ -192,7 +198,11 @@ fn clean_separators(s: &str) -> String {
         s = s.replace("  ", " ");
     }
     while s.contains(" - - ") || s.starts_with("- ") || s.ends_with(" -") {
-        s = s.replace(" - - ", " - ").trim_matches(seps).trim().to_string();
+        s = s
+            .replace(" - - ", " - ")
+            .trim_matches(seps)
+            .trim()
+            .to_string();
     }
     s
 }
@@ -285,9 +295,15 @@ pub fn build_dest_segments(cfg: &TemplateConfig, input: &PathInput) -> Vec<Strin
         .map(|s| sanitize_segment(&clean_separators(s), cfg.target_os, cfg.max_segment_len))
         .filter(|s| !s.is_empty())
         .collect();
-    if out.last().map(|s| s.as_str()) != Some(sanitize_segment(input.filename, cfg.target_os, cfg.max_segment_len).as_str()) {
+    if out.last().map(|s| s.as_str())
+        != Some(sanitize_segment(input.filename, cfg.target_os, cfg.max_segment_len).as_str())
+    {
         let fname = sanitize_segment(input.filename, cfg.target_os, cfg.max_segment_len);
-        let fname = if fname.is_empty() { "file".to_string() } else { fname };
+        let fname = if fname.is_empty() {
+            "file".to_string()
+        } else {
+            fname
+        };
         out.push(fname);
     }
     out
@@ -347,7 +363,12 @@ mod tests {
         c.month_format = MonthFormat::Number;
         let s = build_dest_segments(
             &c,
-            &PathInput { year_month: Some((2025, 8)), place: Some("K"), coords_label: None, filename: "f" },
+            &PathInput {
+                year_month: Some((2025, 8)),
+                place: Some("K"),
+                coords_label: None,
+                filename: "f",
+            },
         );
         assert_eq!(s, vec!["2025", "08", "K", "f"]);
     }
@@ -358,16 +379,30 @@ mod tests {
         c.month_format = MonthFormat::Name;
         let s = build_dest_segments(
             &c,
-            &PathInput { year_month: Some((2025, 12)), place: Some("K"), coords_label: None, filename: "f" },
+            &PathInput {
+                year_month: Some((2025, 12)),
+                place: Some("K"),
+                coords_label: None,
+                filename: "f",
+            },
         );
         assert_eq!(s, vec!["2025", "Грудень", "K", "f"]);
     }
 
     #[test]
     fn sanitize_windows_rules() {
-        assert_eq!(sanitize_segment("funny: name?<>|*", TargetOs::Windows, 80), "funny name");
-        assert_eq!(sanitize_segment("CON.txt", TargetOs::Windows, 80), "_CON.txt");
-        assert_eq!(sanitize_segment("ends with dots...", TargetOs::Windows, 80), "ends with dots");
+        assert_eq!(
+            sanitize_segment("funny: name?<>|*", TargetOs::Windows, 80),
+            "funny name"
+        );
+        assert_eq!(
+            sanitize_segment("CON.txt", TargetOs::Windows, 80),
+            "_CON.txt"
+        );
+        assert_eq!(
+            sanitize_segment("ends with dots...", TargetOs::Windows, 80),
+            "ends with dots"
+        );
         assert_eq!(sanitize_segment("..", TargetOs::Windows, 80), "_.._");
         assert_eq!(sanitize_segment("a/b\\c", TargetOs::Windows, 80), "a b c");
     }
@@ -389,7 +424,9 @@ mod tests {
             filename: "evil.jpg",
         });
         assert!(!s.iter().any(|seg| seg == ".." || seg == "."));
-        assert!(s.iter().all(|seg| !seg.contains('/') && !seg.contains('\\')));
+        assert!(s
+            .iter()
+            .all(|seg| !seg.contains('/') && !seg.contains('\\')));
         assert_eq!(*s.last().unwrap(), "evil.jpg");
     }
 
@@ -418,7 +455,12 @@ mod tests {
         c.template = "{place}/{year}/{filename}".into();
         let s = build_dest_segments(
             &c,
-            &PathInput { year_month: Some((2024, 3)), place: Some("Львів"), coords_label: None, filename: "a.jpg" },
+            &PathInput {
+                year_month: Some((2024, 3)),
+                place: Some("Львів"),
+                coords_label: None,
+                filename: "a.jpg",
+            },
         );
         assert_eq!(s, vec!["Львів", "2024", "a.jpg"]);
     }
@@ -429,7 +471,12 @@ mod tests {
         c.coords_as_label = true;
         let s = build_dest_segments(
             &c,
-            &PathInput { year_month: Some((2025, 1)), place: None, coords_label: Some("48.53800, 37.92000"), filename: "a.jpg" },
+            &PathInput {
+                year_month: Some((2025, 1)),
+                place: None,
+                coords_label: Some("48.53800, 37.92000"),
+                filename: "a.jpg",
+            },
         );
         assert_eq!(s[2], "48.53800, 37.92000");
     }

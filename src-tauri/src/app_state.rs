@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 pub struct AppState {
     pub db_path: PathBuf,
-    pub data_dir: PathBuf,
     pub scan_cancel: Arc<AtomicBool>,
     pub op_cancel: Arc<AtomicBool>,
     pub scan_running: Arc<AtomicBool>,
@@ -17,7 +16,6 @@ impl AppState {
     pub fn new(data_dir: &std::path::Path) -> Self {
         Self {
             db_path: data_dir.join("kadr.db"),
-            data_dir: data_dir.to_path_buf(),
             scan_cancel: Arc::new(AtomicBool::new(false)),
             op_cancel: Arc::new(AtomicBool::new(false)),
             scan_running: Arc::new(AtomicBool::new(false)),

@@ -118,6 +118,6 @@ mod tests {
         assert_eq!(kind_from_extension("aae"), MediaKind::Sidecar);
         assert_eq!(kind_from_extension("zip"), MediaKind::Other);
         assert!(!is_supported_media("exe"));
-        assert!(is_supported_media("pdf") == false);
+        assert!(!is_supported_media("pdf"));
     }
 }

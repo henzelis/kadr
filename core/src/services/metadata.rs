@@ -52,7 +52,11 @@ fn which(bin: &str) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    let first = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
+    let first = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
     if first.is_empty() {
         None
     } else {
@@ -134,7 +138,9 @@ pub struct ExifTool {
 
 impl ExifTool {
     pub fn new() -> Self {
-        Self { bin: locate("exiftool") }
+        Self {
+            bin: locate("exiftool"),
+        }
     }
 
     /// Batch-read several files in one process call (spec §9: no per-file subprocess storm).
@@ -186,15 +192,23 @@ impl ExifTool {
                 for p in paths {
                     let one = self.bin.as_ref().unwrap();
                     let mut sc = Command::new(one);
-                    sc.arg("-json").arg("-n").arg("-G1").arg("-a").arg(p.as_path());
+                    sc.arg("-json")
+                        .arg("-n")
+                        .arg("-G1")
+                        .arg("-a")
+                        .arg(p.as_path());
                     let single = run_captured(&mut sc, Duration::from_secs(60));
                     match single {
                         Ok((Some(st), stdout, _)) if st.success() => {
-                            let objs = parse_exiftool_json(&String::from_utf8_lossy(&stdout)).unwrap_or_default();
+                            let objs = parse_exiftool_json(&String::from_utf8_lossy(&stdout))
+                                .unwrap_or_default();
                             if let Some(obj) = objs.into_iter().next() {
                                 out.push((p.clone(), Ok(exiftool_to_metadata(&obj))));
                             } else {
-                                out.push((p.clone(), Err(KadrError::user("ExifTool не повернув даних для файлу"))));
+                                out.push((
+                                    p.clone(),
+                                    Err(KadrError::user("ExifTool не повернув даних для файлу")),
+                                ));
                             }
                         }
                         _ => {
@@ -226,8 +240,10 @@ impl ExifTool {
         let parsed = parse_exiftool_json(&String::from_utf8_lossy(&stdout));
         match parsed {
             Ok(objects) => {
-                let mut by_file: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> =
-                    objects.into_iter().map(|o| (source_file(&o), o)).collect();
+                let mut by_file: std::collections::HashMap<
+                    String,
+                    serde_json::Map<String, serde_json::Value>,
+                > = objects.into_iter().map(|o| (source_file(&o), o)).collect();
                 paths
                     .iter()
                     .map(|p| {
@@ -250,7 +266,10 @@ impl ExifTool {
                 .map(|p| {
                     (
                         p.clone(),
-                        Err(KadrError::user_detail("Помилка JSON ExifTool", e.to_string())),
+                        Err(KadrError::user_detail(
+                            "Помилка JSON ExifTool",
+                            e.to_string(),
+                        )),
                     )
                 })
                 .collect(),
@@ -287,7 +306,9 @@ fn source_file(obj: &serde_json::Map<String, serde_json::Value>) -> String {
         .to_string()
 }
 
-pub fn parse_exiftool_json(text: &str) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, serde_json::Error> {
+pub fn parse_exiftool_json(
+    text: &str,
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, serde_json::Error> {
     let v: serde_json::Value = serde_json::from_str(text)?;
     match v {
         serde_json::Value::Array(arr) => Ok(arr
@@ -302,7 +323,10 @@ pub fn parse_exiftool_json(text: &str) -> Result<Vec<serde_json::Map<String, ser
 fn get_str<'a>(o: &'a serde_json::Map<String, serde_json::Value>, key: &str) -> Option<&'a str> {
     o.get(key).and_then(|v| v.as_str())
 }
-fn get_any_str<'a>(o: &'a serde_json::Map<String, serde_json::Value>, keys: &[&'a str]) -> Option<&'a str> {
+fn get_any_str<'a>(
+    o: &'a serde_json::Map<String, serde_json::Value>,
+    keys: &[&'a str],
+) -> Option<&'a str> {
     keys.iter().find_map(|k| get_str(o, k))
 }
 fn get_f64(o: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<f64> {
@@ -313,18 +337,63 @@ fn get_any_f64(o: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) ->
 }
 
 // With -G1, ExifTool prefixes tags by IFD group: ExifIFD:, GPS:, QuickTime:, XMP-exif: ...
-const DATE_ORIG_KEYS: [&str; 3] = ["ExifIFD:DateTimeOriginal", "EXIF:DateTimeOriginal", "Composite:DateTimeOriginal"];
-const OFFSET_KEYS: [&str; 3] = ["ExifIFD:OffsetTimeOriginal", "EXIF:OffsetTimeOriginal", "Composite:OffsetTimeOriginal"];
+const DATE_ORIG_KEYS: [&str; 3] = [
+    "ExifIFD:DateTimeOriginal",
+    "EXIF:DateTimeOriginal",
+    "Composite:DateTimeOriginal",
+];
+const OFFSET_KEYS: [&str; 3] = [
+    "ExifIFD:OffsetTimeOriginal",
+    "EXIF:OffsetTimeOriginal",
+    "Composite:OffsetTimeOriginal",
+];
 const XMP_ORIG_KEYS: [&str; 2] = ["XMP-exif:DateTimeOriginal", "XMP:DateTimeOriginal"];
-const CREATE_KEYS: [&str; 5] = ["XMP-xmp:CreateDate", "XMP:CreateDate", "XMP-xmp:ModifyDate", "XMP:ModifyDate", "IPTC:DateCreated"];
-const QT_KEYS: [&str; 4] = ["QuickTime:CreateDate", "QuickTime:MediaCreateDate", "Track:CreateDate", "TrackHeader:CreateDate"];
+const CREATE_KEYS: [&str; 5] = [
+    "XMP-xmp:CreateDate",
+    "XMP:CreateDate",
+    "XMP-xmp:ModifyDate",
+    "XMP:ModifyDate",
+    "IPTC:DateCreated",
+];
+const QT_KEYS: [&str; 4] = [
+    "QuickTime:CreateDate",
+    "QuickTime:MediaCreateDate",
+    "Track:CreateDate",
+    "TrackHeader:CreateDate",
+];
 const DIGITIZED_KEYS: [&str; 2] = ["ExifIFD:DateTimeDigitized", "ExifIFD:DateTime"];
-const LAT_KEYS: [&str; 5] = ["GPS:GPSLatitude", "ExifIFD:GPSLatitude", "XMP-exif:GPSLatitude", "XMP:GPSLatitude", "Composite:GPSLatitude"];
-const LON_KEYS: [&str; 5] = ["GPS:GPSLongitude", "ExifIFD:GPSLongitude", "XMP-exif:GPSLongitude", "XMP:GPSLongitude", "Composite:GPSLongitude"];
+const LAT_KEYS: [&str; 5] = [
+    "GPS:GPSLatitude",
+    "ExifIFD:GPSLatitude",
+    "XMP-exif:GPSLatitude",
+    "XMP:GPSLatitude",
+    "Composite:GPSLatitude",
+];
+const LON_KEYS: [&str; 5] = [
+    "GPS:GPSLongitude",
+    "ExifIFD:GPSLongitude",
+    "XMP-exif:GPSLongitude",
+    "XMP:GPSLongitude",
+    "Composite:GPSLongitude",
+];
 const ALT_KEYS: [&str; 2] = ["GPS:GPSAltitude", "ExifIFD:GPSAltitude"];
-const CITY_KEYS: [&str; 5] = ["IPTC:City", "XMP-iptcExt:City", "XMP:city", "XMP-photoshop:City", "IPTC:LocationCreatedCityName"];
-const W_KEYS: [&str; 3] = ["File:ImageWidth", "ExifIFD:ImageWidth", "JpegIFD:ImageWidth"];
-const H_KEYS: [&str; 3] = ["File:ImageHeight", "ExifIFD:ImageHeight", "JpegIFD:ImageHeight"];
+const CITY_KEYS: [&str; 5] = [
+    "IPTC:City",
+    "XMP-iptcExt:City",
+    "XMP:city",
+    "XMP-photoshop:City",
+    "IPTC:LocationCreatedCityName",
+];
+const W_KEYS: [&str; 3] = [
+    "File:ImageWidth",
+    "ExifIFD:ImageWidth",
+    "JpegIFD:ImageWidth",
+];
+const H_KEYS: [&str; 3] = [
+    "File:ImageHeight",
+    "ExifIFD:ImageHeight",
+    "JpegIFD:ImageHeight",
+];
 
 /// Map an ExifTool JSON object to normalized metadata (spec §6, §7 priorities).
 pub fn exiftool_to_metadata(o: &serde_json::Map<String, serde_json::Value>) -> MediaMetadata {
@@ -358,7 +427,11 @@ pub fn exiftool_to_metadata(o: &serde_json::Map<String, serde_json::Value>) -> M
     let lon = get_any_f64(o, &LON_KEYS);
     if let (Some(la), Some(lo)) = (lat, lon) {
         let alt = get_any_f64(o, &ALT_KEYS);
-        let p = GeoPoint { latitude: la, longitude: lo, altitude: alt };
+        let p = GeoPoint {
+            latitude: la,
+            longitude: lo,
+            altitude: alt,
+        };
         if p.valid() {
             m.geo = Some(p);
         }
@@ -390,7 +463,9 @@ pub struct Ffprobe {
 
 impl Ffprobe {
     pub fn new() -> Self {
-        Self { bin: locate("ffprobe") }
+        Self {
+            bin: locate("ffprobe"),
+        }
     }
 }
 
@@ -414,14 +489,16 @@ impl MetadataReader for Ffprobe {
         })?;
         let mut cmd = Command::new(bin);
         cmd.args([
-            "-v", "error",
-            "-print_format", "json",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
         ])
         .arg(path);
-        let wait = run_captured(&mut cmd, Duration::from_secs(60))
-            .map_err(|e| KadrError::Helper {
+        let wait =
+            run_captured(&mut cmd, Duration::from_secs(60)).map_err(|e| KadrError::Helper {
                 tool: "FFprobe".into(),
                 reason: format!("не вдалося запустити: {e}"),
             })?;
@@ -431,7 +508,10 @@ impl MetadataReader for Ffprobe {
             }
             (Some(_), _, stderr) => Err(KadrError::user_detail(
                 "FFprobe не зміг прочитати файл",
-                String::from_utf8_lossy(&stderr).chars().take(300).collect::<String>(),
+                String::from_utf8_lossy(&stderr)
+                    .chars()
+                    .take(300)
+                    .collect::<String>(),
             )),
             (None, _, _) => Err(KadrError::Helper {
                 tool: "FFprobe".into(),
@@ -445,7 +525,11 @@ pub fn parse_ffprobe_json(text: &str) -> KResult<MediaMetadata> {
     let v: serde_json::Value = serde_json::from_str(text)?;
     let mut m = MediaMetadata::default();
     if let Some(fmt) = v.get("format") {
-        if let Some(dur) = fmt.get("duration").and_then(|d| d.as_str()).and_then(|s| s.parse::<f64>().ok()) {
+        if let Some(dur) = fmt
+            .get("duration")
+            .and_then(|d| d.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+        {
             if dur.is_finite() && dur > 0.0 {
                 m.duration_ms = Some((dur * 1000.0) as i64);
             }
@@ -461,7 +545,10 @@ pub fn parse_ffprobe_json(text: &str) -> KResult<MediaMetadata> {
     if let Some(streams) = v.get("streams").and_then(|s| s.as_array()) {
         for s in streams {
             let codec_type = s.get("codec_type").and_then(|c| c.as_str()).unwrap_or("");
-            let codec = s.get("codec_name").and_then(|c| c.as_str()).map(|c| c.to_string());
+            let codec = s
+                .get("codec_name")
+                .and_then(|c| c.as_str())
+                .map(|c| c.to_string());
             if codec_type == "video" && m.video_codec.is_none() {
                 m.video_codec = codec.clone();
                 if let Some(w) = s.get("width").and_then(|w| w.as_i64()) {
@@ -522,7 +609,11 @@ impl MetadataReader for NativeImage {
 /// Merge provider results by priority: exiftool first (EXIF wins), then
 /// ffprobe fills the gaps, native reader last. Never overwrites a Confirmed
 /// date with a less trustworthy one.
-pub fn merge_metadata(primary: Option<MediaMetadata>, secondary: Option<MediaMetadata>, tertiary: Option<MediaMetadata>) -> MediaMetadata {
+pub fn merge_metadata(
+    primary: Option<MediaMetadata>,
+    secondary: Option<MediaMetadata>,
+    tertiary: Option<MediaMetadata>,
+) -> MediaMetadata {
     fn pick<T>(a: Option<T>, b: Option<T>) -> Option<T> {
         a.or(b)
     }
@@ -616,13 +707,16 @@ mod tests {
 
     #[test]
     fn ffprobe_fixture() {
-        let m = parse_ffprobe_json(r#"{
+        let m = parse_ffprobe_json(
+            r#"{
           "streams": [
             {"index":0,"codec_name":"hevc","codec_type":"video","width":1920,"height":1080},
             {"index":1,"codec_name":"aac","codec_type":"audio"}
           ],
           "format": {"duration":"12.5","tags":{"creation_time":"2024-05-01T10:00:00Z"}}
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
         assert_eq!(m.duration_ms, Some(12500));
         assert_eq!(m.video_codec.as_deref(), Some("hevc"));
         assert_eq!(m.audio_codec.as_deref(), Some("aac"));
@@ -633,13 +727,70 @@ mod tests {
 
     #[test]
     fn merge_keeps_confirmed_exif() {
-        let mut a = MediaMetadata::default();
-        a.captured = Some(captured_date::from_exif("2025:01:01 10:00:00", None));
-        let mut b = MediaMetadata::default();
-        b.captured = Some(captured_date::from_container("2020-01-01T00:00:00Z"));
-        b.duration_ms = Some(500);
+        let a = MediaMetadata {
+            captured: Some(captured_date::from_exif("2025:01:01 10:00:00", None)),
+            ..Default::default()
+        };
+        let b = MediaMetadata {
+            captured: Some(captured_date::from_container("2020-01-01T00:00:00Z")),
+            duration_ms: Some(500),
+            ..Default::default()
+        };
         let m = merge_metadata(Some(a), Some(b), None);
         assert_eq!(m.captured.unwrap().date_source, Some(DateSource::Exif));
         assert_eq!(m.duration_ms, Some(500));
+    }
+
+    #[test]
+    fn exiftool_roundtrip_date_gps() {
+        // §18.3/§18.4: stamp a real JPEG through the actual helper and read it back.
+        // Skips honestly when the helper is not installed.
+        let et = ExifTool::new();
+        let Some(bin) = et.bin.clone() else { return };
+        let dir = std::env::temp_dir().join(format!("kadr-xrt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let jpg = dir.join("t.jpg");
+        image::DynamicImage::new_rgb8(2, 2).save(&jpg).unwrap();
+        let out = Command::new(&bin)
+            .args([
+                "-overwrite_original",
+                "-DateTimeOriginal=2025:08:15 14:03:22",
+                "-OffsetTimeOriginal=+03:00",
+                "-GPSLatitude=48.853",
+                "-GPSLatitudeRef=N",
+                "-GPSLongitude=2.349",
+                "-GPSLongitudeRef=E",
+                jpg.to_str().unwrap(),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "exiftool: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let md = et.read(&jpg).unwrap().expect("metadata read");
+        let cap = md.captured.expect("captured date");
+        assert_eq!(cap.date_source, Some(captured_date::DateSource::Exif));
+        assert_eq!(cap.date_status, captured_date::DateStatus::Confirmed);
+        assert_eq!(
+            cap.captured_at_local,
+            Some(
+                chrono::NaiveDateTime::parse_from_str("2025-08-15T14:03:22", "%Y-%m-%dT%H:%M:%S")
+                    .unwrap()
+            )
+        );
+        assert_eq!(cap.tz_offset_min, Some(180));
+        assert_eq!(cap.captured_at_raw.as_deref(), Some("2025:08:15 14:03:22"));
+        let geo = md.geo.expect("gps coords");
+        assert!((geo.latitude - 48.853).abs() < 1e-3, "lat {}", geo.latitude);
+        assert!(
+            (geo.longitude - 2.349).abs() < 1e-3,
+            "lon {}",
+            geo.longitude
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

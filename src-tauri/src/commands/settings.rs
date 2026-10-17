@@ -63,7 +63,10 @@ pub fn get_settings(state: State<AppState>) -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
-pub fn update_settings(state: State<AppState>, settings: AppSettings) -> Result<AppSettings, String> {
+pub fn update_settings(
+    state: State<AppState>,
+    settings: AppSettings,
+) -> Result<AppSettings, String> {
     // validate template eagerly so a broken pattern never reaches the planner
     let tc = template_of(&settings);
     kadr_core::domain::sort_template::parse_template(&tc.template)
@@ -75,8 +78,12 @@ pub fn update_settings(state: State<AppState>, settings: AppSettings) -> Result<
         }
     }
     let conn = state.conn().map_err(err_str)?;
-    db::set_setting(&conn, "settings", &serde_json::to_string(&settings).unwrap())
-        .map_err(err_str)?;
+    db::set_setting(
+        &conn,
+        "settings",
+        &serde_json::to_string(&settings).unwrap(),
+    )
+    .map_err(err_str)?;
     Ok(settings)
 }
 
@@ -103,7 +110,10 @@ pub fn list_source_roots(state: State<AppState>) -> Result<Vec<db::SourceRoot>, 
 }
 
 #[tauri::command]
-pub fn get_logs(state: State<AppState>, limit: Option<i64>) -> Result<Vec<kadr_core::domain::operation::OperationLogEntry>, String> {
+pub fn get_logs(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<kadr_core::domain::operation::OperationLogEntry>, String> {
     let conn = state.conn().map_err(err_str)?;
     db::recent_logs(&conn, limit.unwrap_or(100)).map_err(err_str)
 }

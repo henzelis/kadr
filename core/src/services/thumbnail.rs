@@ -2,13 +2,11 @@
 //! originals (TECHNICAL_SPEC §16). Unsupported formats get no thumbnail but
 //! stay fully indexed with a clear status.
 
-use crate::persistence::db;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use wait_timeout::ChildExt;
 
 pub struct ThumbService {
     pub cache_dir: PathBuf,
@@ -18,7 +16,10 @@ pub struct ThumbService {
 impl ThumbService {
     pub fn new(cache_dir: &Path) -> Self {
         let _ = std::fs::create_dir_all(cache_dir);
-        Self { cache_dir: cache_dir.to_path_buf(), max_edge: 320 }
+        Self {
+            cache_dir: cache_dir.to_path_buf(),
+            max_edge: 320,
+        }
     }
 
     fn cache_path(&self, normalized_path: &str) -> PathBuf {
@@ -33,17 +34,32 @@ impl ThumbService {
             .query_row(
                 "SELECT path, normalized_path, thumbnail_path FROM media_item WHERE id=?1",
                 rusqlite::params![media_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, Option<String>>(2)?.unwrap_or_default())),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                    ))
+                },
             )
             .ok();
         let (src, np, cached) = row?;
         let out = self.cache_path(&np);
-        if std::fs::metadata(&out).is_ok() || (!cached.is_empty() && std::fs::metadata(&cached).is_ok()) {
-            let p = if std::fs::metadata(&out).is_ok() { out } else { PathBuf::from(cached) };
+        if std::fs::metadata(&out).is_ok()
+            || (!cached.is_empty() && std::fs::metadata(&cached).is_ok())
+        {
+            let p = if std::fs::metadata(&out).is_ok() {
+                out
+            } else {
+                PathBuf::from(cached)
+            };
             return Some(p);
         }
-        if self.render(&Path::new(&src), &out) {
-            let _ = conn.execute("UPDATE media_item SET thumbnail_path=?1 WHERE id=?2", rusqlite::params![out.to_string_lossy(), media_id]);
+        if self.render(Path::new(&src), &out) {
+            let _ = conn.execute(
+                "UPDATE media_item SET thumbnail_path=?1 WHERE id=?2",
+                rusqlite::params![out.to_string_lossy(), media_id],
+            );
             Some(out)
         } else {
             None
@@ -52,15 +68,15 @@ impl ThumbService {
 
     fn render(&self, src: &Path, out: &Path) -> bool {
         // 1. native decode when the `image` crate supports the format
-        if let Ok(img) = image::ImageReader::open(src)
-            .and_then(|r| r.with_guessed_format())
-            .map(|r| r.decode())
-        {
-            if let Ok(img) = img {
-                let small = img.thumbnail(self.max_edge, self.max_edge);
-                if small.save(out).is_ok() {
-                    return true;
-                }
+        let decoded = (|| -> std::io::Result<image::DynamicImage> {
+            let r = image::ImageReader::open(src)?;
+            let r = r.with_guessed_format()?;
+            r.decode().map_err(std::io::Error::other)
+        })();
+        if let Ok(img) = decoded {
+            let small = img.thumbnail(self.max_edge, self.max_edge);
+            if small.save(out).is_ok() {
+                return true;
             }
         }
         // 2. embedded preview via ExifTool (HEIC/RAW often carry one)
@@ -90,8 +106,10 @@ impl ThumbService {
                  ORDER BY COALESCE(captured_at_local,'9999') DESC LIMIT ?1",
             )
             .and_then(|mut st| {
-                st.query_map(rusqlite::params![limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
-                    .collect::<Result<Vec<_>, _>>()
+                st.query_map(rusqlite::params![limit], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()
             })
             .unwrap_or_default();
         let mut made = 0;
@@ -101,7 +119,10 @@ impl ThumbService {
             }
             let out = self.cache_path(&np);
             if self.render(Path::new(&path), &out) {
-                let _ = conn.execute("UPDATE media_item SET thumbnail_path=?1 WHERE id=?2", rusqlite::params![out.to_string_lossy(), id]);
+                let _ = conn.execute(
+                    "UPDATE media_item SET thumbnail_path=?1 WHERE id=?2",
+                    rusqlite::params![out.to_string_lossy(), id],
+                );
                 made += 1;
                 on_done(&id, Some(out));
             } else {
@@ -115,9 +136,11 @@ impl ThumbService {
 fn exiftool_preview(path: &Path) -> Option<Vec<u8>> {
     let bin = crate::services::metadata::ExifTool::new().bin?;
     let mut cmd = Command::new(bin);
-    cmd.args(["-b", "-ThumbnailImage", "-EmbeddedImage", "-PreviewImage"]).arg(path);
+    cmd.args(["-b", "-ThumbnailImage", "-EmbeddedImage", "-PreviewImage"])
+        .arg(path);
     let (status, stdout, _) =
-        crate::services::metadata::run_captured(&mut cmd, std::time::Duration::from_secs(20)).ok()?;
+        crate::services::metadata::run_captured(&mut cmd, std::time::Duration::from_secs(20))
+            .ok()?;
     if !status.map(|s| s.success()).unwrap_or(false) {
         return None;
     }
@@ -146,7 +169,18 @@ mod tests {
         let conn = open_db(":memory:").unwrap();
         let root = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
         let cancel = AtomicBool::new(false);
-        scan_root(&conn, &root, &ScanOptions { compute_hashes: false, ..Default::default() }, "j", &cancel, &|_| {}).unwrap();
+        scan_root(
+            &conn,
+            &root,
+            &ScanOptions {
+                compute_hashes: false,
+                ..Default::default()
+            },
+            "j",
+            &cancel,
+            &|_| {},
+        )
+        .unwrap();
         let cache = dir.join("thumbs");
         let svc = ThumbService::new(&cache);
         let made = svc.generate_pending(&conn, &cancel, 50, |_, _| {});

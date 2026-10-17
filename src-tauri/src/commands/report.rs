@@ -1,5 +1,4 @@
 use crate::app_state::{err_str, AppState};
-use kadr_core::persistence::db;
 use kadr_core::services::{duplicate, report};
 use serde::Serialize;
 use tauri::State;

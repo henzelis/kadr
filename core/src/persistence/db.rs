@@ -3,10 +3,10 @@
 use crate::domain::captured_date::{DateSource, DateStatus};
 use crate::domain::location::{LocationSource, PlaceStatus};
 use crate::domain::media_item::{MediaItem, MediaKind, MetadataStatus};
+pub use crate::domain::operation::LogLevel as DbLogLevel;
 use crate::domain::operation::{
     LogLevel, OperationLogEntry, OperationMode, PlanItem, PlanItemStatus, PlanWarning,
 };
-pub use crate::domain::operation::LogLevel as DbLogLevel;
 use crate::errors::{KResult, KadrError};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -193,7 +193,8 @@ pub fn add_source_root(conn: &Connection, path: &str) -> KResult<SourceRoot> {
 }
 
 pub fn list_source_roots(conn: &Connection) -> KResult<Vec<SourceRoot>> {
-    let mut stmt = conn.prepare("SELECT id, path, status, added_at FROM source_root ORDER BY added_at")?;
+    let mut stmt =
+        conn.prepare("SELECT id, path, status, added_at FROM source_root ORDER BY added_at")?;
     let rows = stmt.query_map([], |r| {
         Ok(SourceRoot {
             id: r.get(0)?,
@@ -239,14 +240,20 @@ pub(crate) fn row_to_media(r: &rusqlite::Row) -> rusqlite::Result<MediaItem> {
         captured_at_local: r.get(16)?,
         captured_at_utc: r.get(17)?,
         timezone_offset: r.get(18)?,
-        date_source: r.get::<_, Option<String>>(19)?.as_deref().map(parse_date_source),
+        date_source: r
+            .get::<_, Option<String>>(19)?
+            .as_deref()
+            .map(parse_date_source),
         date_status: parse_date_status(&r.get::<_, String>(20)?),
         normalization_note: r.get(21)?,
         latitude: r.get(22)?,
         longitude: r.get(23)?,
         altitude: r.get(24)?,
         place_label: r.get(25)?,
-        location_source: r.get::<_, Option<String>>(26)?.as_deref().map(parse_location_source),
+        location_source: r
+            .get::<_, Option<String>>(26)?
+            .as_deref()
+            .map(parse_location_source),
         place_status: parse_place_status(&r.get::<_, String>(27)?),
         manual_place_override: r.get::<_, i64>(28)? != 0,
         duration_ms: r.get(29)?,
@@ -507,8 +514,11 @@ pub fn query_media(conn: &Connection, f: &MediaFilter) -> KResult<(Vec<MediaItem
     } else {
         format!(" WHERE {}", where_sql.join(" AND "))
     };
-    let total: i64 =
-        conn.query_row(&format!("SELECT COUNT(*) FROM media_item{w}"), rusqlite::params_from_iter(args.iter()), |r| r.get(0))?;
+    let total: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM media_item{w}"),
+        rusqlite::params_from_iter(args.iter()),
+        |r| r.get(0),
+    )?;
 
     let order = match f.sort.as_deref() {
         Some("name") => "file_name COLLATE NOCASE ASC",
@@ -531,12 +541,20 @@ pub fn query_media(conn: &Connection, f: &MediaFilter) -> KResult<(Vec<MediaItem
 
 pub fn set_manual_place(conn: &Connection, ids: &[String], place: &str) -> KResult<()> {
     let place = place.trim();
-    let status = if place.is_empty() { "no_geo" } else { "resolved" };
+    let status = if place.is_empty() {
+        "no_geo"
+    } else {
+        "resolved"
+    };
     for id in ids {
         conn.execute(
             "UPDATE media_item SET place_label = ?1, location_source = 'manual',
              place_status = ?2, manual_place_override = 1 WHERE id = ?3",
-            params![if place.is_empty() { None } else { Some(place) }, status, id],
+            params![
+                if place.is_empty() { None } else { Some(place) },
+                status,
+                id
+            ],
         )?;
     }
     Ok(())
@@ -561,7 +579,11 @@ pub fn set_manual_date(conn: &Connection, id: &str, raw: &str) -> KResult<()> {
     Ok(())
 }
 
-pub fn delete_missing_under(conn: &Connection, root_id: &str, scan_started_ms: i64) -> KResult<usize> {
+pub fn delete_missing_under(
+    conn: &Connection,
+    root_id: &str,
+    scan_started_ms: i64,
+) -> KResult<usize> {
     Ok(conn.execute(
         "DELETE FROM media_item WHERE source_root_id = ?1 AND scan_timestamp < ?2",
         params![root_id, scan_started_ms],
@@ -597,14 +619,26 @@ pub fn update_scan_progress(
 pub fn finish_scan_job(conn: &Connection, id: &str, cancelled: bool) -> KResult<()> {
     conn.execute(
         "UPDATE scan_job SET state=?1, cancelled=?2, finished_at=?3 WHERE id=?4",
-        params![if cancelled { "cancelled" } else { "done" }, cancelled as i64, now_ms(), id],
+        params![
+            if cancelled { "cancelled" } else { "done" },
+            cancelled as i64,
+            now_ms(),
+            id
+        ],
     )?;
     Ok(())
 }
 
 // ---------- plans / operations ----------
 
-pub fn save_plan(conn: &Connection, plan_id: &str, mode: OperationMode, dest_root: &str, template: &str, settings_json: &str) -> KResult<()> {
+pub fn save_plan(
+    conn: &Connection,
+    plan_id: &str,
+    mode: OperationMode,
+    dest_root: &str,
+    template: &str,
+    settings_json: &str,
+) -> KResult<()> {
     conn.execute(
         "INSERT INTO operation_plan(id, created_at, mode, destination_root, template, settings_json)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -664,9 +698,14 @@ pub fn get_plan_items(conn: &Connection, plan_id: &str) -> KResult<Vec<PlanItem>
     )?;
     let items = stmt
         .query_map(params![plan_id], |r| {
-            let mode = if r.get::<_, String>(5)? == "copy" { OperationMode::Copy } else { OperationMode::Move };
+            let mode = if r.get::<_, String>(5)? == "copy" {
+                OperationMode::Copy
+            } else {
+                OperationMode::Move
+            };
             let warnings: Vec<PlanWarning> =
-                serde_json::from_str(&r.get::<_, Option<String>>(10)?.unwrap_or_default()).unwrap_or_default();
+                serde_json::from_str(&r.get::<_, Option<String>>(10)?.unwrap_or_default())
+                    .unwrap_or_default();
             Ok(PlanItem {
                 id: r.get(0)?,
                 plan_id: r.get(1)?,
@@ -692,28 +731,54 @@ pub fn get_plan_items(conn: &Connection, plan_id: &str) -> KResult<Vec<PlanItem>
 }
 
 pub fn update_plan_item_destination(conn: &Connection, item_id: &str, dest: &str) -> KResult<()> {
-    conn.execute("UPDATE operation_item SET destination_path=?1 WHERE id=?2", params![dest, item_id])?;
+    conn.execute(
+        "UPDATE operation_item SET destination_path=?1 WHERE id=?2",
+        params![dest, item_id],
+    )?;
     Ok(())
 }
 
-pub fn update_plan_item_status(conn: &Connection, item_id: &str, status: PlanItemStatus) -> KResult<()> {
-    conn.execute("UPDATE operation_item SET status=?1 WHERE id=?2", params![plan_status_str(status), item_id])?;
+pub fn update_plan_item_status(
+    conn: &Connection,
+    item_id: &str,
+    status: PlanItemStatus,
+) -> KResult<()> {
+    conn.execute(
+        "UPDATE operation_item SET status=?1 WHERE id=?2",
+        params![plan_status_str(status), item_id],
+    )?;
     Ok(())
 }
 
 pub fn update_plan_item_mode(conn: &Connection, plan_id: &str, mode: OperationMode) -> KResult<()> {
-    let m = if mode == OperationMode::Copy { "copy" } else { "move" };
-    conn.execute("UPDATE operation_item SET mode=?1 WHERE plan_id=?2", params![m, plan_id])?;
-    conn.execute("UPDATE operation_plan SET mode=?1 WHERE id=?2", params![m, plan_id])?;
+    let m = if mode == OperationMode::Copy {
+        "copy"
+    } else {
+        "move"
+    };
+    conn.execute(
+        "UPDATE operation_item SET mode=?1 WHERE plan_id=?2",
+        params![m, plan_id],
+    )?;
+    conn.execute(
+        "UPDATE operation_plan SET mode=?1 WHERE id=?2",
+        params![m, plan_id],
+    )?;
     Ok(())
 }
 
 pub fn set_plan_state(conn: &Connection, plan_id: &str, state: &str) -> KResult<()> {
-    conn.execute("UPDATE operation_plan SET state=?1 WHERE id=?2", params![state, plan_id])?;
+    conn.execute(
+        "UPDATE operation_plan SET state=?1 WHERE id=?2",
+        params![state, plan_id],
+    )?;
     Ok(())
 }
 
-pub fn get_plan_meta(conn: &Connection, plan_id: &str) -> KResult<Option<(String, String, String)>> {
+pub fn get_plan_meta(
+    conn: &Connection,
+    plan_id: &str,
+) -> KResult<Option<(String, String, String)>> {
     Ok(conn
         .query_row(
             "SELECT mode, destination_root, state FROM operation_plan WHERE id=?1",
@@ -725,7 +790,13 @@ pub fn get_plan_meta(conn: &Connection, plan_id: &str) -> KResult<Option<(String
 
 // ---------- log ----------
 
-pub fn log_event(conn: &Connection, job_id: &str, level: LogLevel, action: &str, message: &str) -> KResult<()> {
+pub fn log_event(
+    conn: &Connection,
+    job_id: &str,
+    level: LogLevel,
+    action: &str,
+    message: &str,
+) -> KResult<()> {
     let lvl = match level {
         LogLevel::Info => "info",
         LogLevel::Warn => "warn",
@@ -764,7 +835,13 @@ pub fn recent_logs(conn: &Connection, limit: i64) -> KResult<Vec<OperationLogEnt
 // ---------- settings ----------
 
 pub fn get_setting(conn: &Connection, key: &str) -> KResult<Option<String>> {
-    Ok(conn.query_row("SELECT value FROM app_settings WHERE key=?1", params![key], |r| r.get(0)).optional()?)
+    Ok(conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key=?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 pub fn set_setting(conn: &Connection, key: &str, value: &str) -> KResult<()> {
@@ -839,7 +916,7 @@ mod tests {
 
         // manual place override
         let id = rows[0].id.clone();
-        set_manual_place(&conn, &[id.clone()], "Карпати").unwrap();
+        set_manual_place(&conn, std::slice::from_ref(&id), "Карпати").unwrap();
         // rescan again
         item.id = uuid::Uuid::new_v4().to_string();
         upsert_media_item(&conn, &item).unwrap();
@@ -854,7 +931,10 @@ mod tests {
         upsert_media_item(&conn, &item).unwrap();
         let got = get_media_item(&conn, &id).unwrap().unwrap();
         assert_eq!(got.date_source, Some(DateSource::Manual));
-        assert_eq!(got.captured_at_local.as_deref(), Some("2020-05-01T10:00:00"));
+        assert_eq!(
+            got.captured_at_local.as_deref(),
+            Some("2020-05-01T10:00:00")
+        );
     }
 
     #[test]
@@ -875,7 +955,14 @@ mod tests {
         for it in [&a, &b, &c] {
             upsert_media_item(&conn, it).unwrap();
         }
-        let (_, total) = query_media(&conn, &MediaFilter { duplicates_only: Some(true), ..Default::default() }).unwrap();
+        let (_, total) = query_media(
+            &conn,
+            &MediaFilter {
+                duplicates_only: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(total, 2);
     }
 
@@ -883,8 +970,14 @@ mod tests {
     fn settings_roundtrip() {
         let conn = open_db(":memory:").unwrap();
         set_setting(&conn, "theme", "dark").unwrap();
-        assert_eq!(get_setting(&conn, "theme").unwrap().as_deref(), Some("dark"));
+        assert_eq!(
+            get_setting(&conn, "theme").unwrap().as_deref(),
+            Some("dark")
+        );
         set_setting(&conn, "theme", "light").unwrap();
-        assert_eq!(get_setting(&conn, "theme").unwrap().as_deref(), Some("light"));
+        assert_eq!(
+            get_setting(&conn, "theme").unwrap().as_deref(),
+            Some("light")
+        );
     }
 }

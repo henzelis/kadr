@@ -50,7 +50,10 @@ fn real_exif_date_and_gps() {
     assert_eq!(it.timezone_offset, Some(180));
     // §18.4: GPS stored with provenance
     assert!(it.latitude.unwrap() - 48.537878 < 1e-6);
-    assert_eq!(it.place_status, kadr_core::domain::location::PlaceStatus::CoordsOnly);
+    assert_eq!(
+        it.place_status,
+        kadr_core::domain::location::PlaceStatus::CoordsOnly
+    );
     // §18.5: no invented place name
     assert!(it.place_label.is_none());
 

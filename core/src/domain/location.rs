@@ -76,10 +76,30 @@ mod tests {
 
     #[test]
     fn valid_range() {
-        assert!(GeoPoint { latitude: 48.5, longitude: 37.9, altitude: None }.valid());
-        assert!(!GeoPoint { latitude: 91.0, longitude: 0.0, altitude: None }.valid());
-        assert!(!GeoPoint { latitude: 0.0, longitude: 0.0, altitude: None }.valid());
-        assert!(!GeoPoint { latitude: f64::NAN, longitude: 1.0, altitude: None }.valid());
+        assert!(GeoPoint {
+            latitude: 48.5,
+            longitude: 37.9,
+            altitude: None
+        }
+        .valid());
+        assert!(!GeoPoint {
+            latitude: 91.0,
+            longitude: 0.0,
+            altitude: None
+        }
+        .valid());
+        assert!(!GeoPoint {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: None
+        }
+        .valid());
+        assert!(!GeoPoint {
+            latitude: f64::NAN,
+            longitude: 1.0,
+            altitude: None
+        }
+        .valid());
     }
 
     #[test]

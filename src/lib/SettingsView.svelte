@@ -82,7 +82,7 @@ async function saveAll() {
     <h3>Схема папок</h3>
     <div class="field">
       <label>Шаблон</label>
-      <input class="mono" value={settings.template} placeholder="{year}/{month_number} - {month_name}/{place}/{filename}"
+      <input class="mono" value={settings.template} placeholder="{'{year}/{month_number} - {month_name}/{place}/{filename}'}"
         oninput={(e) => (settings = { ...settings, template: e.currentTarget.value })} />
     </div>
     <div class="field">

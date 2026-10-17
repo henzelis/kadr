@@ -43,7 +43,15 @@ pub fn apply_sort_plan(
     if meta.2 == "applying" || meta.2 == "applied" || meta.2 == "undone" {
         return Err("Цей план уже застосовано".into());
     }
-    let pending = items.iter().filter(|i| matches!(i.status, kadr_core::domain::operation::PlanItemStatus::Pending)).count();
+    let pending = items
+        .iter()
+        .filter(|i| {
+            matches!(
+                i.status,
+                kadr_core::domain::operation::PlanItemStatus::Pending
+            )
+        })
+        .count();
     if pending == 0 {
         return Err("У плані немає файлів до виконання".into());
     }
@@ -55,27 +63,52 @@ pub fn apply_sort_plan(
     let running = state.op_running.clone();
 
     std::thread::spawn(move || {
-        let emit = |total: usize, done: usize, failed: usize, skipped: usize, current: &str, finished: bool, error: Option<String>| {
-            let _ = app.emit("apply-progress", ApplyPayload {
-                plan_id: plan_id.clone(), total, done, failed, skipped,
-                current: current.to_string(), finished, cancelled: false, error,
-            });
+        let emit = |total: usize,
+                    done: usize,
+                    failed: usize,
+                    skipped: usize,
+                    current: &str,
+                    finished: bool,
+                    error: Option<String>| {
+            let _ = app.emit(
+                "apply-progress",
+                ApplyPayload {
+                    plan_id: plan_id.clone(),
+                    total,
+                    done,
+                    failed,
+                    skipped,
+                    current: current.to_string(),
+                    finished,
+                    cancelled: false,
+                    error,
+                },
+            );
         };
         emit(items.len(), 0, 0, 0, "", false, None);
         match db::open_db(&db_path.to_string_lossy()) {
             Ok(conn) => {
-                let res = operation_runner::apply_plan(
-                    &conn,
-                    &plan_id,
-                    cancel.as_ref(),
-                    &|p| emit(p.total, p.done, p.failed, p.skipped, &p.current, false, None),
-                );
+                let res = operation_runner::apply_plan(&conn, &plan_id, cancel.as_ref(), &|p| {
+                    emit(
+                        p.total, p.done, p.failed, p.skipped, &p.current, false, None,
+                    )
+                });
                 match res {
                     Ok(r) => {
-                        let _ = app.emit("apply-progress", ApplyPayload {
-                            plan_id, total: items.len(), done: r.done, failed: r.failed, skipped: r.skipped,
-                            current: String::new(), finished: true, cancelled: r.cancelled, error: None,
-                        });
+                        let _ = app.emit(
+                            "apply-progress",
+                            ApplyPayload {
+                                plan_id,
+                                total: items.len(),
+                                done: r.done,
+                                failed: r.failed,
+                                skipped: r.skipped,
+                                current: String::new(),
+                                finished: true,
+                                cancelled: r.cancelled,
+                                error: None,
+                            },
+                        );
                     }
                     Err(e) => emit(items.len(), 0, 0, 0, "", true, Some(e.friendly())),
                 }
@@ -119,38 +152,73 @@ pub fn undo_operation(
     std::thread::spawn(move || {
         match db::open_db(&db_path.to_string_lossy()) {
             Ok(conn) => {
-                let res = operation_runner::undo_plan(
-                    &conn,
-                    &plan_id,
-                    mode,
-                    cancel.as_ref(),
-                    &|p| {
-                        let _ = app.emit("apply-progress", ApplyPayload {
-                            plan_id: plan_id.clone(), total: p.total, done: p.done, failed: p.failed,
-                            skipped: p.skipped, current: p.current.clone(), finished: false, cancelled: false, error: None,
-                        });
-                    },
-                );
+                let res =
+                    operation_runner::undo_plan(&conn, &plan_id, mode, cancel.as_ref(), &|p| {
+                        let _ = app.emit(
+                            "apply-progress",
+                            ApplyPayload {
+                                plan_id: plan_id.clone(),
+                                total: p.total,
+                                done: p.done,
+                                failed: p.failed,
+                                skipped: p.skipped,
+                                current: p.current.clone(),
+                                finished: false,
+                                cancelled: false,
+                                error: None,
+                            },
+                        );
+                    });
                 match res {
                     Ok(r) => {
-                        let _ = app.emit("apply-progress", ApplyPayload {
-                            plan_id, total: items.len(), done: r.done, failed: r.failed, skipped: r.skipped,
-                            current: String::new(), finished: true, cancelled: r.cancelled, error: None,
-                        });
+                        let _ = app.emit(
+                            "apply-progress",
+                            ApplyPayload {
+                                plan_id,
+                                total: items.len(),
+                                done: r.done,
+                                failed: r.failed,
+                                skipped: r.skipped,
+                                current: String::new(),
+                                finished: true,
+                                cancelled: r.cancelled,
+                                error: None,
+                            },
+                        );
                     }
                     Err(e) => {
-                        let _ = app.emit("apply-progress", ApplyPayload {
-                            plan_id: plan_id.clone(), total: 0, done: 0, failed: 0, skipped: 0,
-                            current: String::new(), finished: true, cancelled: false, error: Some(e.friendly()),
-                        });
+                        let _ = app.emit(
+                            "apply-progress",
+                            ApplyPayload {
+                                plan_id: plan_id.clone(),
+                                total: 0,
+                                done: 0,
+                                failed: 0,
+                                skipped: 0,
+                                current: String::new(),
+                                finished: true,
+                                cancelled: false,
+                                error: Some(e.friendly()),
+                            },
+                        );
                     }
                 }
             }
             Err(e) => {
-                let _ = app.emit("apply-progress", ApplyPayload {
-                    plan_id, total: 0, done: 0, failed: 0, skipped: 0,
-                    current: String::new(), finished: true, cancelled: false, error: Some(e.friendly()),
-                });
+                let _ = app.emit(
+                    "apply-progress",
+                    ApplyPayload {
+                        plan_id,
+                        total: 0,
+                        done: 0,
+                        failed: 0,
+                        skipped: 0,
+                        current: String::new(),
+                        finished: true,
+                        cancelled: false,
+                        error: Some(e.friendly()),
+                    },
+                );
             }
         }
         running.store(false, Ordering::Relaxed);

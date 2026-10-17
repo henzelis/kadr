@@ -1,9 +1,9 @@
 //! Safe apply engine: copy via temp+verify+rename, move via rename with
 //! verified copy fallback, journaling, undo, retry, cancel (TECHNICAL_SPEC §11).
 
+use crate::domain::operation::LogLevel;
 use crate::domain::operation::{OperationMode, PlanItem, PlanItemStatus};
 use crate::errors::{KResult, KadrError};
-use crate::domain::operation::LogLevel;
 use crate::persistence::db;
 use crate::services::scanner::sha256_file;
 use rusqlite::Connection;
@@ -34,7 +34,10 @@ pub struct ApplyReport {
 fn copy_verified(source: &Path, dest_final: &Path) -> KResult<String> {
     // 1. copy to a temp file in the destination directory
     let dir = dest_final.parent().ok_or_else(|| {
-        KadrError::user_detail("Некоректний шлях призначення", dest_final.display().to_string())
+        KadrError::user_detail(
+            "Некоректний шлях призначення",
+            dest_final.display().to_string(),
+        )
     })?;
     fs::create_dir_all(dir).map_err(|e| KadrError::Io {
         path: dir.display().to_string(),
@@ -61,9 +64,14 @@ fn copy_verified(source: &Path, dest_final: &Path) -> KResult<String> {
             source: e,
         })?;
         let mut writer = BufWriter::with_capacity(1 << 20, dst_file);
-        std::io::copy(&mut reader, &mut writer)
-            .map_err(|e| KadrError::Io { path: tmp.display().to_string(), source: e })?;
-        writer.flush().map_err(|e| KadrError::Io { path: tmp.display().to_string(), source: e })?;
+        std::io::copy(&mut reader, &mut writer).map_err(|e| KadrError::Io {
+            path: tmp.display().to_string(),
+            source: e,
+        })?;
+        writer.flush().map_err(|e| KadrError::Io {
+            path: tmp.display().to_string(),
+            source: e,
+        })?;
         writer.get_mut().sync_all().map_err(|e| KadrError::Io {
             path: tmp.display().to_string(),
             source: e,
@@ -96,7 +104,9 @@ fn copy_verified(source: &Path, dest_final: &Path) -> KResult<String> {
 
         // 3. atomic rename to the final name (existence re-check by caller policy)
         if dest_final.exists() {
-            return Err(KadrError::user("Файл у призначенні з'явився під час копіювання — перезапис заблоковано"));
+            return Err(KadrError::user(
+                "Файл у призначенні з'явився під час копіювання — перезапис заблоковано",
+            ));
         }
         fs::rename(&tmp, dest_final).map_err(|e| KadrError::Io {
             path: dest_final.display().to_string(),
@@ -127,8 +137,8 @@ pub fn apply_plan(
     cancel: &AtomicBool,
     on_progress: &dyn Fn(&ApplyProgress),
 ) -> KResult<ApplyReport> {
-    let meta = db::get_plan_meta(conn, plan_id)?
-        .ok_or_else(|| KadrError::user("План не знайдено"))?;
+    let meta =
+        db::get_plan_meta(conn, plan_id)?.ok_or_else(|| KadrError::user("План не знайдено"))?;
     let dest_root = meta.1.clone();
     let all = db::get_plan_items(conn, plan_id)?;
     let items: Vec<PlanItem> = all
@@ -137,16 +147,38 @@ pub fn apply_plan(
         .collect();
 
     let job_id = uuid::Uuid::new_v4().to_string();
-    db::log_event(conn, &job_id, LogLevel::Info, "apply", &format!("Почато застосування плану ({} файлів, режим {})", items.len(), meta.0))?;
+    db::log_event(
+        conn,
+        &job_id,
+        LogLevel::Info,
+        "apply",
+        &format!(
+            "Почато застосування плану ({} файлів, режим {})",
+            items.len(),
+            meta.0
+        ),
+    )?;
     db::set_plan_state(conn, plan_id, "applying")?;
 
-    let mut prog = ApplyProgress { total: items.len(), ..Default::default() };
-    let mut report = ApplyReport { job_id: job_id.clone(), ..Default::default() };
+    let mut prog = ApplyProgress {
+        total: items.len(),
+        ..Default::default()
+    };
+    let mut report = ApplyReport {
+        job_id: job_id.clone(),
+        ..Default::default()
+    };
 
     for item in items {
         if cancel.load(Ordering::Relaxed) {
             report.cancelled = true;
-            db::log_event(conn, &job_id, LogLevel::Warn, "apply", "Застосування скасовано користувачем")?;
+            db::log_event(
+                conn,
+                &job_id,
+                LogLevel::Warn,
+                "apply",
+                "Застосування скасовано користувачем",
+            )?;
             break;
         }
         prog.current = item.source_path.clone();
@@ -158,7 +190,13 @@ pub fn apply_plan(
                 conn.execute(
                     "UPDATE operation_item SET status='done', finished_at=?1, sha256_after=?2,
                      undo_source_path=?3, undo_dest_path=?4, error=NULL WHERE id=?5",
-                    rusqlite::params![db::now_ms(), sha_after, item.source_path, item.destination_path, item.id],
+                    rusqlite::params![
+                        db::now_ms(),
+                        sha_after,
+                        item.source_path,
+                        item.destination_path,
+                        item.id
+                    ],
                 )?;
                 prog.done += 1;
                 report.done += 1;
@@ -169,7 +207,13 @@ pub fn apply_plan(
                     "UPDATE operation_item SET status='failed', error=?1, finished_at=?2 WHERE id=?3",
                     rusqlite::params![msg, db::now_ms(), item.id],
                 )?;
-                db::log_event(conn, &job_id, LogLevel::Error, "apply", &format!("{}: {}", item.source_path, msg))?;
+                db::log_event(
+                    conn,
+                    &job_id,
+                    LogLevel::Error,
+                    "apply",
+                    &format!("{}: {}", item.source_path, msg),
+                )?;
                 prog.failed += 1;
                 report.failed += 1;
             }
@@ -179,28 +223,47 @@ pub fn apply_plan(
     db::set_plan_state(
         conn,
         plan_id,
-        if report.cancelled { "interrupted" } else { "applied" },
+        if report.cancelled {
+            "interrupted"
+        } else {
+            "applied"
+        },
     )?;
     db::log_event(
         conn,
         &job_id,
-        if report.failed > 0 { LogLevel::Warn } else { LogLevel::Info },
+        if report.failed > 0 {
+            LogLevel::Warn
+        } else {
+            LogLevel::Info
+        },
         "apply",
-        &format!("Завершено:готово {}, помилок {}", report.done, report.failed),
+        &format!(
+            "Завершено:готово {}, помилок {}",
+            report.done, report.failed
+        ),
     )?;
     on_progress(&prog);
     Ok(report)
 }
 
 /// Returns sha256 of the resulting file on success.
-fn apply_item(conn: &Connection, job_id: &str, item: &PlanItem, dest_root: &str) -> KResult<String> {
+fn apply_item(
+    conn: &Connection,
+    job_id: &str,
+    item: &PlanItem,
+    dest_root: &str,
+) -> KResult<String> {
     let src = Path::new(&item.source_path);
     let dest = Path::new(&item.destination_path);
 
     if !src.exists() {
         return Err(KadrError::user("Джерело зникло з диска — файл пропущено"));
     }
-    let md = fs::metadata(src).map_err(|e| KadrError::Io { path: item.source_path.clone(), source: e })?;
+    let md = fs::metadata(src).map_err(|e| KadrError::Io {
+        path: item.source_path.clone(),
+        source: e,
+    })?;
     if md.len() as i64 != item.size_bytes {
         return Err(KadrError::user_detail(
             "Файл змінився після побудови плану — потрібне нове сканування",
@@ -209,13 +272,21 @@ fn apply_item(conn: &Connection, job_id: &str, item: &PlanItem, dest_root: &str)
     }
     // containment re-check at apply time (never trust stored paths blindly)
     if !super::path_planner::is_inside_root(dest_root, dest) {
-        return Err(KadrError::user("Цільовий шлях виходить за межі папки архіву — заблоковано"));
+        return Err(KadrError::user(
+            "Цільовий шлях виходить за межі папки архіву — заблоковано",
+        ));
     }
 
     // conflict policy at apply time: never overwrite
     let final_dest = if dest.exists() {
         let alt = unique_existing(dest);
-        db::log_event(conn, job_id, LogLevel::Warn, "apply", &format!("Конфлікт назви, застосовано суфікс: {}", alt.display()))?;
+        db::log_event(
+            conn,
+            job_id,
+            LogLevel::Warn,
+            "apply",
+            &format!("Конфлікт назви, застосовано суфікс: {}", alt.display()),
+        )?;
         alt
     } else {
         dest.to_path_buf()
@@ -231,7 +302,9 @@ fn apply_item(conn: &Connection, job_id: &str, item: &PlanItem, dest_root: &str)
                     if &sha != expected {
                         // content changed after planning: put the file back
                         let _ = fs::rename(&final_dest, src);
-                        return Err(KadrError::user("Вміст файлу не збігається із запланованим — переміщення скасовано"));
+                        return Err(KadrError::user(
+                            "Вміст файлу не збігається із запланованим — переміщення скасовано",
+                        ));
                     }
                 }
                 return Ok(sha);
@@ -264,9 +337,21 @@ pub fn undo_plan(
         .filter(|i| matches!(i.status, PlanItemStatus::Done))
         .collect();
     let job_id = uuid::Uuid::new_v4().to_string();
-    db::log_event(conn, &job_id, LogLevel::Info, "undo", &format!("Undo плану ({} файлів)", items.len()))?;
-    let mut prog = ApplyProgress { total: items.len(), ..Default::default() };
-    let mut report = ApplyReport { job_id: job_id.clone(), ..Default::default() };
+    db::log_event(
+        conn,
+        &job_id,
+        LogLevel::Info,
+        "undo",
+        &format!("Undo плану ({} файлів)", items.len()),
+    )?;
+    let mut prog = ApplyProgress {
+        total: items.len(),
+        ..Default::default()
+    };
+    let mut report = ApplyReport {
+        job_id: job_id.clone(),
+        ..Default::default()
+    };
 
     for item in items {
         if cancel.load(Ordering::Relaxed) {
@@ -280,25 +365,37 @@ pub fn undo_plan(
         let src = Path::new(&item.source_path);
 
         if !dest.exists() {
-            conn.execute("UPDATE operation_item SET error=?1 WHERE id=?2",
-                rusqlite::params!["Undo неможливий: цільовий файл зникне", item.id])?;
+            conn.execute(
+                "UPDATE operation_item SET error=?1 WHERE id=?2",
+                rusqlite::params!["Undo неможливий: цільовий файл зникне", item.id],
+            )?;
             report.failed += 1;
             continue;
         }
         let sha = match sha256_file(dest) {
             Ok(s) => s,
             Err(e) => {
-                conn.execute("UPDATE operation_item SET error=?1 WHERE id=?2",
-                    rusqlite::params![e.friendly(), item.id])?;
+                conn.execute(
+                    "UPDATE operation_item SET error=?1 WHERE id=?2",
+                    rusqlite::params![e.friendly(), item.id],
+                )?;
                 report.failed += 1;
                 continue;
             }
         };
         if let Some(expected) = &item.sha256_before {
             if &sha != expected {
-                conn.execute("UPDATE operation_item SET error=?1 WHERE id=?2",
-                    rusqlite::params!["Undo заблоковано: цільовий файл зміннено ззовні", item.id])?;
-                db::log_event(conn, &job_id, LogLevel::Warn, "undo", &format!("Пропущено (файл зміннено): {}", dest.display()))?;
+                conn.execute(
+                    "UPDATE operation_item SET error=?1 WHERE id=?2",
+                    rusqlite::params!["Undo заблоковано: цільовий файл зміннено ззовні", item.id],
+                )?;
+                db::log_event(
+                    conn,
+                    &job_id,
+                    LogLevel::Warn,
+                    "undo",
+                    &format!("Пропущено (файл зміннено): {}", dest.display()),
+                )?;
                 report.failed += 1;
                 continue;
             }
@@ -307,8 +404,10 @@ pub fn undo_plan(
         if mode_was_move {
             // restore the file to its original location; refuse if occupied
             if src.exists() {
-                conn.execute("UPDATE operation_item SET error=?1 WHERE id=?2",
-                    rusqlite::params!["Undo: вихідний шлях уже зайнятий", item.id])?;
+                conn.execute(
+                    "UPDATE operation_item SET error=?1 WHERE id=?2",
+                    rusqlite::params!["Undo: вихідний шлях уже зайнятий", item.id],
+                )?;
                 report.failed += 1;
                 continue;
             }
@@ -323,8 +422,10 @@ pub fn undo_plan(
                         let _ = e;
                     }
                     Err(err) => {
-                        conn.execute("UPDATE operation_item SET error=?1 WHERE id=?2",
-                            rusqlite::params![err.friendly(), item.id])?;
+                        conn.execute(
+                            "UPDATE operation_item SET error=?1 WHERE id=?2",
+                            rusqlite::params![err.friendly(), item.id],
+                        )?;
                         report.failed += 1;
                         continue;
                     }
@@ -333,19 +434,29 @@ pub fn undo_plan(
         } else {
             // copy mode: undo = remove our verified copy (original is intact)
             if let Err(e) = fs::remove_file(dest) {
-                conn.execute("UPDATE operation_item SET error=?1 WHERE id=?2",
-                    rusqlite::params![format!("Не вдалося видалити копію: {e}"), item.id])?;
+                conn.execute(
+                    "UPDATE operation_item SET error=?1 WHERE id=?2",
+                    rusqlite::params![format!("Не вдалося видалити копію: {e}"), item.id],
+                )?;
                 report.failed += 1;
                 continue;
             }
         }
-        conn.execute("UPDATE operation_item SET status='undone', finished_at=?1, error=NULL WHERE id=?2",
-            rusqlite::params![db::now_ms(), item.id])?;
+        conn.execute(
+            "UPDATE operation_item SET status='undone', finished_at=?1, error=NULL WHERE id=?2",
+            rusqlite::params![db::now_ms(), item.id],
+        )?;
         prog.done += 1;
         report.done += 1;
     }
     db::set_plan_state(conn, plan_id, "undone")?;
-    db::log_event(conn, &job_id, LogLevel::Info, "undo", &format!("Undo завершено: {}", report.done))?;
+    db::log_event(
+        conn,
+        &job_id,
+        LogLevel::Info,
+        "undo",
+        &format!("Undo завершено: {}", report.done),
+    )?;
     Ok(report)
 }
 
@@ -385,10 +496,13 @@ mod tests {
         (conn, src, dest)
     }
 
-    fn plan_opts(dest: &PathBuf, mode: OperationMode) -> PlanOptions {
+    fn plan_opts(dest: &std::path::Path, mode: OperationMode) -> PlanOptions {
         PlanOptions {
             destination_root: dest.to_string_lossy().to_string(),
-            template: TemplateConfig { target_os: TargetOs::Unix, ..Default::default() },
+            template: TemplateConfig {
+                target_os: TargetOs::Unix,
+                ..Default::default()
+            },
             mode,
             conflict: ConflictPolicy::Suffix,
             media_ids: None,
@@ -404,13 +518,23 @@ mod tests {
         assert_eq!(rep.done, 2);
         assert!(src.join("a.jpg").exists(), "source untouched in copy mode");
         // files landed somewhere under dest with correct content
-        let found: Vec<PathBuf> = walkdir::WalkDir::new(&dest).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()).map(|e| e.path().to_path_buf()).collect();
+        let found: Vec<PathBuf> = walkdir::WalkDir::new(&dest)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .map(|e| e.path().to_path_buf())
+            .collect();
         assert_eq!(found.len(), 2);
-        let a = found.iter().find(|p| p.file_name().unwrap() == "a.jpg").unwrap();
+        let a = found
+            .iter()
+            .find(|p| p.file_name().unwrap() == "a.jpg")
+            .unwrap();
         assert_eq!(fs::read(a).unwrap(), b"content-a");
         // journal rows exist
         let items = get_plan_items(&conn, &pid).unwrap();
-        assert!(items.iter().all(|i| i.status == PlanItemStatus::Done && i.sha256_after.is_some()));
+        assert!(items
+            .iter()
+            .all(|i| i.status == PlanItemStatus::Done && i.sha256_after.is_some()));
         fs::remove_dir_all(src.parent().unwrap()).ok();
     }
 
@@ -435,7 +559,11 @@ mod tests {
         let rep = undo_plan(&conn, &pid, false, &cancel, &|_| {}).unwrap();
         assert_eq!(rep.done, 2);
         assert!(src.join("a.jpg").exists());
-        let leftovers = walkdir::WalkDir::new(&dest).into_iter().filter_map(|e| e.ok()).filter(|e| e.file_type().is_file()).count();
+        let leftovers = walkdir::WalkDir::new(&dest)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .count();
         assert_eq!(leftovers, 0);
         fs::remove_dir_all(src.parent().unwrap()).ok();
     }
@@ -460,8 +588,12 @@ mod tests {
         let cancel = AtomicBool::new(false);
         apply_plan(&conn, &pid, &cancel, &|_| {}).unwrap();
         // tamper with a copied file
-        let a = walkdir::WalkDir::new(&dest).into_iter().filter_map(|e| e.ok())
-            .find(|e| e.file_name() == "a.jpg").unwrap().into_path();
+        let a = walkdir::WalkDir::new(&dest)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name() == "a.jpg")
+            .unwrap()
+            .into_path();
         fs::write(&a, b"tampered").unwrap();
         let rep = undo_plan(&conn, &pid, false, &cancel, &|_| {}).unwrap();
         assert_eq!(rep.failed, 1);
@@ -478,12 +610,19 @@ mod tests {
         let (pid1, _, _) = build_plan(&conn, &plan_opts(&dest, OperationMode::Copy)).unwrap();
         apply_plan(&conn, &pid1, &cancel, &|_| {}).unwrap();
         let (pid2, plan2, _) = build_plan(&conn, &plan_opts(&dest, OperationMode::Copy)).unwrap();
-        let suffixed = plan2.iter().filter(|p| p.destination_path.contains(" (1).")).count();
+        let suffixed = plan2
+            .iter()
+            .filter(|p| p.destination_path.contains(" (1)."))
+            .count();
         assert_eq!(suffixed, 2);
         apply_plan(&conn, &pid2, &cancel, &|_| {}).unwrap();
         // original content preserved
-        let orig = walkdir::WalkDir::new(&dest).into_iter().filter_map(|e| e.ok())
-            .find(|e| e.file_name() == "a.jpg").unwrap().into_path();
+        let orig = walkdir::WalkDir::new(&dest)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name() == "a.jpg")
+            .unwrap()
+            .into_path();
         assert_eq!(fs::read(&orig).unwrap(), b"content-a");
         fs::remove_dir_all(src.parent().unwrap()).ok();
     }
@@ -493,17 +632,40 @@ mod tests {
         let (conn, src, dest) = fixture();
         let (pid, plan, _) = build_plan(&conn, &plan_opts(&dest, OperationMode::Copy)).unwrap();
         // break one item's destination: point it at an existing directory path (rename will fail)
-        let bad = plan.iter().find(|p| p.source_path.ends_with("a.jpg")).unwrap();
-        conn.execute("UPDATE operation_item SET destination_path=?1 WHERE id=?2",
-            rusqlite::params![dest.join("Невідома дата").join("Без геолокації").join("a.jpg").join("nested").to_string_lossy().to_string(), bad.id]).ok();
+        let bad = plan
+            .iter()
+            .find(|p| p.source_path.ends_with("a.jpg"))
+            .unwrap();
+        conn.execute(
+            "UPDATE operation_item SET destination_path=?1 WHERE id=?2",
+            rusqlite::params![
+                dest.join("Невідома дата")
+                    .join("Без геолокації")
+                    .join("a.jpg")
+                    .join("nested")
+                    .to_string_lossy()
+                    .to_string(),
+                bad.id
+            ],
+        )
+        .ok();
         // create a file exactly at that parent to make it un-creatable
         fs::create_dir_all(dest.join("Невідома дата").join("Без геолокації")).unwrap();
-        fs::write(dest.join("Невідома дата").join("Без геолокації").join("a.jpg"), b"existing-dir-blocker").unwrap();
+        fs::write(
+            dest.join("Невідома дата")
+                .join("Без геолокації")
+                .join("a.jpg"),
+            b"existing-dir-blocker",
+        )
+        .unwrap();
         let cancel = AtomicBool::new(false);
-        let rep = apply_plan(&conn, &pid, &cancel, &|_| {}).unwrap();
+        let _rep = apply_plan(&conn, &pid, &cancel, &|_| {}).unwrap();
         assert!(src.join("a.jpg").exists(), "original survives failure");
         let items = get_plan_items(&conn, &pid).unwrap();
-        let failed = items.iter().filter(|i| i.status == PlanItemStatus::Failed).count();
+        let failed = items
+            .iter()
+            .filter(|i| i.status == PlanItemStatus::Failed)
+            .count();
         // the tampered destination now collides with an existing file → suffix policy saves it,
         // so what must hold is: no data lost, originals intact
         assert!(failed <= 1);

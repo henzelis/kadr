@@ -1,8 +1,8 @@
 //! Exact duplicate detection via SHA-256 (size is only a pre-filter — §10).
 
 use crate::domain::media_item::MediaItem;
-use crate::persistence::db::{self, MEDIA_COLS};
 use crate::errors::KResult;
+use crate::persistence::db::{self, MEDIA_COLS};
 use crate::services::scanner::sha256_file;
 use rusqlite::Connection;
 use std::path::Path;
@@ -22,8 +22,8 @@ pub fn duplicate_groups(conn: &Connection) -> KResult<Vec<Vec<MediaItem>>> {
     ))?;
     for h in hashes {
         let mut items = Vec::new();
-        let mut mapped = stmt.query_map(rusqlite::params![h], db::row_to_media)?;
-        while let Some(r) = mapped.next() {
+        let mapped = stmt.query_map(rusqlite::params![h], db::row_to_media)?;
+        for r in mapped {
             items.push(r?);
         }
         groups.push(items);
@@ -33,10 +33,19 @@ pub fn duplicate_groups(conn: &Connection) -> KResult<Vec<Vec<MediaItem>>> {
 
 /// Compute SHA-256 for items missing it (hash-on-demand path used by the
 /// Duplicates view when scanning ran with hashing disabled).
-pub fn ensure_hashes(conn: &Connection, cancel: &AtomicBool, limit: i64, mut on_progress: impl FnMut(usize, usize)) -> KResult<usize> {
+pub fn ensure_hashes(
+    conn: &Connection,
+    cancel: &AtomicBool,
+    limit: i64,
+    mut on_progress: impl FnMut(usize, usize),
+) -> KResult<usize> {
     let rows: Vec<(String, String, i64, i64)> = conn
-        .prepare("SELECT id, path, size_bytes, mtime FROM media_item WHERE sha256 IS NULL LIMIT ?1")?
-        .query_map(rusqlite::params![limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+        .prepare(
+            "SELECT id, path, size_bytes, mtime FROM media_item WHERE sha256 IS NULL LIMIT ?1",
+        )?
+        .query_map(rusqlite::params![limit], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?
         .collect::<Result<_, _>>()?;
     let mut done = 0;
     for (id, path, _size, _mtime) in rows {
@@ -51,7 +60,10 @@ pub fn ensure_hashes(conn: &Connection, cancel: &AtomicBool, limit: i64, mut on_
                 )?;
             }
             Err(e) => {
-                conn.execute("UPDATE media_item SET last_error=?1 WHERE id=?2", rusqlite::params![e.friendly(), id])?;
+                conn.execute(
+                    "UPDATE media_item SET last_error=?1 WHERE id=?2",
+                    rusqlite::params![e.friendly(), id],
+                )?;
             }
         }
         done += 1;
@@ -102,10 +114,23 @@ mod tests {
         let conn = open_db(":memory:").unwrap();
         let root = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
         let cancel = AtomicBool::new(false);
-        scan_root(&conn, &root, &ScanOptions { compute_hashes: false, ..Default::default() }, "j", &cancel, &|_| {}).unwrap();
+        scan_root(
+            &conn,
+            &root,
+            &ScanOptions {
+                compute_hashes: false,
+                ..Default::default()
+            },
+            "j",
+            &cancel,
+            &|_| {},
+        )
+        .unwrap();
         let n = ensure_hashes(&conn, &cancel, 10, |_, _| {}).unwrap();
         assert_eq!(n, 1);
-        let h: Option<String> = conn.query_row("SELECT sha256 FROM media_item", [], |r| r.get(0)).unwrap();
+        let h: Option<String> = conn
+            .query_row("SELECT sha256 FROM media_item", [], |r| r.get(0))
+            .unwrap();
         assert!(h.is_some());
         std::fs::remove_dir_all(&dir).ok();
     }

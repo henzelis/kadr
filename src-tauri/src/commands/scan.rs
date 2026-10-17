@@ -34,7 +34,10 @@ pub fn start_scan(
         return Err("Додайте вихідну папку в Налаштуваннях, перш ніж сканувати".into());
     }
     let root = match root_id {
-        Some(id) => roots.into_iter().find(|r| r.id == id).ok_or("Джерело не знайдено")?,
+        Some(id) => roots
+            .into_iter()
+            .find(|r| r.id == id)
+            .ok_or("Джерело не знайдено")?,
         None => roots.into_iter().next().unwrap(),
     };
     let settings = load_settings(&conn);
@@ -55,7 +58,13 @@ pub fn start_scan(
     let jid = job_id.clone();
 
     std::thread::spawn(move || {
-        let emit = |found: i64, processed: i64, skipped: i64, errors: i64, current: &str, finished: bool, error: Option<String>| {
+        let emit = |found: i64,
+                    processed: i64,
+                    skipped: i64,
+                    errors: i64,
+                    current: &str,
+                    finished: bool,
+                    error: Option<String>| {
             let _ = app.emit(
                 "scan-progress",
                 ScanProgressPayload {
@@ -73,22 +82,35 @@ pub fn start_scan(
         };
         match db::open_db(&db_path.to_string_lossy()) {
             Ok(conn) => {
-                let result = scanner::scan_root(
-                    &conn,
-                    &root,
-                    &opts,
-                    &jid,
-                    cancel.as_ref(),
-                    &|p| emit(p.found, p.processed, p.skipped, p.errors, &p.current, false, None),
-                );
+                let result = scanner::scan_root(&conn, &root, &opts, &jid, cancel.as_ref(), &|p| {
+                    emit(
+                        p.found,
+                        p.processed,
+                        p.skipped,
+                        p.errors,
+                        &p.current,
+                        false,
+                        None,
+                    )
+                });
                 match result {
                     Ok(p) => {
                         let cancelled = cancel.load(Ordering::Relaxed);
                         emit(p.found, p.processed, p.skipped, p.errors, "", true, None);
-                        let _ = app.emit("scan-progress", ScanProgressPayload {
-                            job_id: jid, found: p.found, processed: p.processed, skipped: p.skipped,
-                            errors: p.errors, current: String::new(), finished: true, cancelled, error: None,
-                        });
+                        let _ = app.emit(
+                            "scan-progress",
+                            ScanProgressPayload {
+                                job_id: jid,
+                                found: p.found,
+                                processed: p.processed,
+                                skipped: p.skipped,
+                                errors: p.errors,
+                                current: String::new(),
+                                finished: true,
+                                cancelled,
+                                error: None,
+                            },
+                        );
                     }
                     Err(e) => emit(0, 0, 0, 0, "", true, Some(e.friendly())),
                 }

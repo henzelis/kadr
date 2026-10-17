@@ -5,9 +5,9 @@ use crate::domain::captured_date::{self, CapturedDate, DateSource, DateStatus};
 use crate::domain::location::{LocationSource, PlaceStatus};
 use crate::domain::media_item::{kind_from_extension, MediaItem, MediaKind, MetadataStatus};
 use crate::domain::operation::LogLevel;
+use crate::errors::{KResult, KadrError};
 use crate::persistence::db::{self, SourceRoot};
 use crate::services::metadata::{self as meta, MediaMetadata, MetadataReader};
-use crate::errors::{KResult, KadrError};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -57,12 +57,10 @@ pub fn sha256_file(path: &Path) -> KResult<String> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
     loop {
-        let n = f
-            .read(&mut buf)
-            .map_err(|e| KadrError::Io {
-                path: path.display().to_string(),
-                source: e,
-            })?;
+        let n = f.read(&mut buf).map_err(|e| KadrError::Io {
+            path: path.display().to_string(),
+            source: e,
+        })?;
         if n == 0 {
             break;
         }
@@ -127,14 +125,12 @@ fn load_cached_row(conn: &Connection, normalized: &str) -> Option<CachedRow> {
 
 /// Merge normalized metadata into a MediaItem honoring sidecar/kind and
 /// the fs-date-fallback policy.
-fn fill_item_from_meta(
-    item: &mut MediaItem,
-    m: &MediaMetadata,
-    fs_date_fallback: bool,
-) {
+fn fill_item_from_meta(item: &mut MediaItem, m: &MediaMetadata, fs_date_fallback: bool) {
     if let Some(c) = &m.captured {
         item.captured_at_raw = c.captured_at_raw.clone();
-        item.captured_at_local = c.captured_at_local.map(|v| v.format("%Y-%m-%dT%H:%M:%S").to_string());
+        item.captured_at_local = c
+            .captured_at_local
+            .map(|v| v.format("%Y-%m-%dT%H:%M:%S").to_string());
         item.captured_at_utc = c.captured_at_utc.map(|v| v.to_rfc3339());
         item.timezone_offset = c.tz_offset_min;
         item.date_source = c.date_source;
@@ -171,7 +167,9 @@ fn fill_item_from_meta(
     if item.date_status == DateStatus::Unknown && fs_date_fallback {
         let c: CapturedDate = captured_date::from_filesystem(item.mtime);
         item.captured_at_raw = c.captured_at_raw;
-        item.captured_at_local = c.captured_at_local.map(|v| v.format("%Y-%m-%dT%H:%M:%S").to_string());
+        item.captured_at_local = c
+            .captured_at_local
+            .map(|v| v.format("%Y-%m-%dT%H:%M:%S").to_string());
         item.captured_at_utc = c.captured_at_utc.map(|v| v.to_rfc3339());
         item.timezone_offset = c.tz_offset_min;
         item.date_source = Some(DateSource::FileSystem);
@@ -215,7 +213,10 @@ pub fn scan_root(
         .filter_entry(|e| {
             if !opts.include_hidden && e.depth() > 0 {
                 if let Some(name) = e.file_name().to_str() {
-                    if name.starts_with('.') || name == "node_modules" || name.starts_with("$RECYCLE") {
+                    if name.starts_with('.')
+                        || name == "node_modules"
+                        || name.starts_with("$RECYCLE")
+                    {
                         return false;
                     }
                 }
@@ -236,7 +237,10 @@ pub fn scan_root(
                     job_id,
                     LogLevel::Warn,
                     "scan",
-                    &format!("Пропущено директорію: {}", err.to_string().chars().take(200).collect::<String>()),
+                    &format!(
+                        "Пропущено директорію: {}",
+                        err.to_string().chars().take(200).collect::<String>()
+                    ),
                 )?;
                 continue;
             }
@@ -270,7 +274,12 @@ pub fn scan_root(
                 job_id,
                 LogLevel::Info,
                 "scan",
-                &format!("Непідтримуваний формат: {}", path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()),
+                &format!(
+                    "Непідтримуваний формат: {}",
+                    path.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default()
+                ),
             )?;
             continue;
         }
@@ -409,7 +418,8 @@ pub fn scan_root(
         idx += 25;
         let paths: Vec<PathBuf> = chunk.iter().map(|(p, _)| p.clone()).collect();
         let results = exif.read_batch(&paths);
-        let mut by_path: std::collections::HashMap<PathBuf, MediaMetadata> = std::collections::HashMap::new();
+        let mut by_path: std::collections::HashMap<PathBuf, MediaMetadata> =
+            std::collections::HashMap::new();
         for (p, r) in results {
             match r {
                 Ok(m) => {
@@ -417,7 +427,13 @@ pub fn scan_root(
                 }
                 Err(e) => {
                     // video may still be readable through ffprobe; other errors are logged
-                    db::log_event(conn, job_id, LogLevel::Warn, "metadata", &format!("{}: {}", p.display(), e.friendly()))?;
+                    db::log_event(
+                        conn,
+                        job_id,
+                        LogLevel::Warn,
+                        "metadata",
+                        &format!("{}: {}", p.display(), e.friendly()),
+                    )?;
                 }
             }
         }
@@ -435,7 +451,8 @@ pub fn scan_root(
                     m = meta::merge_metadata(Some(m), Some(nm), None);
                 }
             }
-            let had_any = m.captured.is_some() || m.geo.is_some() || m.width.is_some() || m.mime.is_some();
+            let had_any =
+                m.captured.is_some() || m.geo.is_some() || m.width.is_some() || m.mime.is_some();
             item.metadata_status = if had_any {
                 MetadataStatus::Ok
             } else if exif.bin.is_none() {
@@ -472,7 +489,13 @@ pub fn scan_root(
     if !cancelled {
         let stale = db::delete_missing_under(conn, &root.id, started)? as i64;
         if stale > 0 {
-            db::log_event(conn, job_id, LogLevel::Info, "scan", &format!("Видалено з індексу {} відсутніх файлів", stale))?;
+            db::log_event(
+                conn,
+                job_id,
+                LogLevel::Info,
+                "scan",
+                &format!("Видалено з індексу {} відсутніх файлів", stale),
+            )?;
         }
         link_sidecars(conn)?;
     }
@@ -528,7 +551,10 @@ pub fn link_sidecars(conn: &Connection) -> KResult<()> {
 
 fn dir_stem(normalized: &str) -> (String, String) {
     let p = Path::new(normalized);
-    let dir = p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
+    let dir = p
+        .parent()
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_default();
     let stem = p
         .file_stem()
         .map(|s| s.to_string_lossy().to_lowercase())
@@ -565,17 +591,40 @@ mod tests {
         let conn = db::open_db(":memory:").unwrap();
         let root = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
         let cancel = AtomicBool::new(false);
-        let p1 = scan_root(&conn, &root, &ScanOptions::default(), "job1", &cancel, &|_| {}).unwrap();
+        let p1 = scan_root(
+            &conn,
+            &root,
+            &ScanOptions::default(),
+            "job1",
+            &cancel,
+            &|_| {},
+        )
+        .unwrap();
         let (items, total) = query_media(&conn, &MediaFilter::default()).unwrap();
         assert_eq!(total, 2, "jpg+mov indexed, txt skipped: {items:?}");
 
-        let p2 = scan_root(&conn, &root, &ScanOptions::default(), "job2", &cancel, &|_| {}).unwrap();
+        let p2 = scan_root(
+            &conn,
+            &root,
+            &ScanOptions::default(),
+            "job2",
+            &cancel,
+            &|_| {},
+        )
+        .unwrap();
         let (_, total2) = query_media(&conn, &MediaFilter::default()).unwrap();
         assert_eq!(total2, 2, "rescan must not duplicate");
         assert!(p1.found >= 2 && p2.found >= 2);
 
         // sha256 present for dedup
-        let (items, _) = query_media(&conn, &MediaFilter { search: Some("IMG".into()), ..Default::default() }).unwrap();
+        let (items, _) = query_media(
+            &conn,
+            &MediaFilter {
+                search: Some("IMG".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(items[0].sha256.is_some());
         fs::remove_dir_all(&dir).ok();
     }
@@ -589,14 +638,29 @@ mod tests {
         let root = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
         let cancel = AtomicBool::new(false);
         // fallback OFF: date unknown
-        scan_root(&conn, &root, &ScanOptions { compute_hashes: false, ..Default::default() }, "j1", &cancel, &|_| {}).unwrap();
+        scan_root(
+            &conn,
+            &root,
+            &ScanOptions {
+                compute_hashes: false,
+                ..Default::default()
+            },
+            "j1",
+            &cancel,
+            &|_| {},
+        )
+        .unwrap();
         let (items, _) = query_media(&conn, &MediaFilter::default()).unwrap();
         assert_eq!(items[0].date_status, DateStatus::Unknown);
         // fallback ON: filesystem date with Fallback status
         scan_root(
             &conn,
             &root,
-            &ScanOptions { compute_hashes: false, fs_date_fallback: true, ..Default::default() },
+            &ScanOptions {
+                compute_hashes: false,
+                fs_date_fallback: true,
+                ..Default::default()
+            },
             "j2",
             &cancel,
             &|_| {},
@@ -605,6 +669,40 @@ mod tests {
         let (items, _) = query_media(&conn, &MediaFilter::default()).unwrap();
         assert_eq!(items[0].date_status, DateStatus::Fallback);
         assert_eq!(items[0].date_source, Some(DateSource::FileSystem));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn corrupt_files_do_not_stop_the_scan() {
+        // §18.11: one broken file must never abort the whole tree walk.
+        let dir = std::env::temp_dir().join(format!("kadr-cor-{}", uuid::Uuid::new_v4()));
+        touch_file(
+            &dir.join("ok.jpg"),
+            b"\xff\xd8\xff\xe0 plausible jpeg payload",
+        );
+        touch_file(&dir.join("broken.jpg"), b"\xff\xd8 then pure garbage");
+        touch_file(
+            &dir.join("nested/deeper/late.png"),
+            b"\x89PNG\r\n\x1a\n truncated tail",
+        );
+        let conn = db::open_db(":memory:").unwrap();
+        let root = add_source_root(&conn, dir.to_str().unwrap()).unwrap();
+        let cancel = AtomicBool::new(false);
+        let p = scan_root(
+            &conn,
+            &root,
+            &ScanOptions::default(),
+            "jobc",
+            &cancel,
+            &|_| {},
+        )
+        .unwrap();
+        let (_, total) = query_media(&conn, &MediaFilter::default()).unwrap();
+        assert_eq!(
+            total, 3,
+            "every file stays indexed even when metadata fails"
+        );
+        assert_eq!(p.processed, total);
         fs::remove_dir_all(&dir).ok();
     }
 }

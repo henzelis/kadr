@@ -72,8 +72,7 @@ impl CapturedDate {
 
     /// Year/month used for folder naming — from the local wall-clock value.
     pub fn year_month(&self) -> Option<(i32, u32)> {
-        self.captured_at_local
-            .map(|dt| (dt.year(), dt.month()))
+        self.captured_at_local.map(|dt| (dt.year(), dt.month()))
     }
 }
 
@@ -84,12 +83,7 @@ pub fn parse_exif_datetime(raw: &str, offset_raw: Option<&str>) -> Option<NaiveD
     let cleaned = raw.trim().replace('/', "-");
     // EXIF uses ':' as date separator: 2025:08:12 14:03:22
     let normalized = if cleaned.len() >= 10 && cleaned.as_bytes()[4] == b':' {
-        format!(
-            "{}-{}-{}",
-            &cleaned[0..4],
-            &cleaned[5..7],
-            &cleaned[8..10]
-        ) + &cleaned[10..]
+        format!("{}-{}-{}", &cleaned[0..4], &cleaned[5..7], &cleaned[8..10]) + &cleaned[10..]
     } else {
         cleaned
     };
@@ -107,7 +101,7 @@ pub fn parse_exif_datetime(raw: &str, offset_raw: Option<&str>) -> Option<NaiveD
     }
     // date-only parsed above by NaiveDate path
     if let Ok(d) = chrono::NaiveDate::parse_from_str(&normalized, "%Y-%m-%d") {
-        return Some(d.and_hms_opt(0, 0, 0)?);
+        return d.and_hms_opt(0, 0, 0);
     }
     let _ = offset_raw; // offset handled by the caller to keep local value pure
     None
@@ -237,7 +231,8 @@ pub fn from_filesystem(mtime_epoch: i64) -> CapturedDate {
             date_source: Some(DateSource::FileSystem),
             date_status: DateStatus::Fallback,
             normalization_note: Some(
-                "Використано дату модифікації файлової системи, а не підтверджений час зйомки".into(),
+                "Використано дату модифікації файлової системи, а не підтверджений час зйомки"
+                    .into(),
             ),
         },
         None => CapturedDate {

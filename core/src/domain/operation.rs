@@ -132,16 +132,24 @@ mod tests {
 
     #[test]
     fn suffix_policy() {
-        let taken: HashSet<String> =
-            ["/a/b.jpg", "/a/b (1).jpg", "/a/b (2).jpg"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(unique_name("/a/b.jpg", |p| taken.contains(p)), "/a/b (3).jpg");
+        let taken: HashSet<String> = ["/a/b.jpg", "/a/b (1).jpg", "/a/b (2).jpg"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            unique_name("/a/b.jpg", |p| taken.contains(p)),
+            "/a/b (3).jpg"
+        );
         assert_eq!(unique_name("/a/c.jpg", |p| taken.contains(p)), "/a/c.jpg");
         assert_eq!(unique_name("/a/noext", |p| taken.contains(p)), "/a/noext");
     }
 
     #[test]
     fn split_ext_keeps_dots_in_dirs() {
-        assert_eq!(split_ext("/dir.d/name.jpg"), ("/dir.d/name".into(), "jpg".into()));
+        assert_eq!(
+            split_ext("/dir.d/name.jpg"),
+            ("/dir.d/name".into(), "jpg".into())
+        );
         assert_eq!(split_ext("README"), ("README".into(), "".into()));
     }
 }

@@ -14,7 +14,7 @@ pub fn run() {
             let state = AppState::new(&data_dir);
             // initialize the database schema once at startup
             let conn = kadr_core::persistence::db::open_db(&state.db_path.to_string_lossy())
-                .map_err(|e| format!("{}", e.friendly()))?;
+                .map_err(|e| e.friendly().to_string())?;
             drop(conn);
             app.manage(state);
             Ok(())

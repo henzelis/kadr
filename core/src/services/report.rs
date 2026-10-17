@@ -1,7 +1,7 @@
 //! CSV/JSON report export with actual metadata, destinations and statuses (§18.20).
 
-use crate::persistence::db;
 use crate::errors::{KResult, KadrError};
+use crate::persistence::db;
 use rusqlite::Connection;
 use std::io::Write;
 use std::path::Path;
@@ -31,9 +31,15 @@ pub fn export_plan_csv(conn: &Connection, plan_id: &str, out: &Path) -> KResult<
         let (cap, dsrc, place, lsrc) = match &media {
             Some(m) => (
                 m.captured_at_local.clone().unwrap_or_else(|| "—".into()),
-                m.date_source.map(db::date_source_str).unwrap_or("none").to_string(),
+                m.date_source
+                    .map(db::date_source_str)
+                    .unwrap_or("none")
+                    .to_string(),
                 m.place_label.clone().unwrap_or_else(|| "—".into()),
-                m.location_source.map(db::location_source_str).unwrap_or("none").to_string(),
+                m.location_source
+                    .map(db::location_source_str)
+                    .unwrap_or("none")
+                    .to_string(),
             ),
             None => ("—".into(), "none".into(), "—".into(), "none".into()),
         };
@@ -50,7 +56,11 @@ pub fn export_plan_csv(conn: &Connection, plan_id: &str, out: &Path) -> KResult<
                 csv_escape(&media.map(|m| m.file_name).unwrap_or_default()),
                 csv_escape(&it.source_path),
                 csv_escape(&it.destination_path),
-                if it.mode == crate::domain::operation::OperationMode::Copy { "copy".into() } else { "move".into() },
+                if it.mode == crate::domain::operation::OperationMode::Copy {
+                    "copy".into()
+                } else {
+                    "move".into()
+                },
                 db::plan_status_str(it.status).to_string(),
                 it.size_bytes.to_string(),
                 csv_escape(&cap),
@@ -63,7 +73,10 @@ pub fn export_plan_csv(conn: &Connection, plan_id: &str, out: &Path) -> KResult<
             ]
             .join(";")
         )
-        .map_err(|e| KadrError::Io { path: out.display().to_string(), source: e })?;
+        .map_err(|e| KadrError::Io {
+            path: out.display().to_string(),
+            source: e,
+        })?;
     }
     w.flush().ok();
     Ok(items.len())
@@ -71,8 +84,12 @@ pub fn export_plan_csv(conn: &Connection, plan_id: &str, out: &Path) -> KResult<
 
 pub fn export_plan_json(conn: &Connection, plan_id: &str, out: &Path) -> KResult<usize> {
     let items = db::get_plan_items(conn, plan_id)?;
-    let value = serde_json::to_string_pretty(&items).map_err(|e| KadrError::user_detail("JSON export", e.to_string()))?;
-    std::fs::write(out, value).map_err(|e| KadrError::Io { path: out.display().to_string(), source: e })?;
+    let value = serde_json::to_string_pretty(&items)
+        .map_err(|e| KadrError::user_detail("JSON export", e.to_string()))?;
+    std::fs::write(out, value).map_err(|e| KadrError::Io {
+        path: out.display().to_string(),
+        source: e,
+    })?;
     Ok(items.len())
 }
 
@@ -102,7 +119,10 @@ mod tests {
             &conn,
             &PlanOptions {
                 destination_root: dest.to_string_lossy().to_string(),
-                template: TemplateConfig { target_os: TargetOs::Unix, ..Default::default() },
+                template: TemplateConfig {
+                    target_os: TargetOs::Unix,
+                    ..Default::default()
+                },
                 mode: crate::domain::operation::OperationMode::Copy,
                 conflict: ConflictPolicy::Suffix,
                 media_ids: None,
@@ -118,7 +138,8 @@ mod tests {
         assert!(text.contains(";done;"));
         let json_path = dir.join("report.json");
         export_plan_json(&conn, &pid, &json_path).unwrap();
-        let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+        let j: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
         assert_eq!(j.as_array().unwrap()[0]["status"], "done");
         std::fs::remove_dir_all(&dir).ok();
     }

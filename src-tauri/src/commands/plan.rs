@@ -34,11 +34,18 @@ pub fn build_sort_plan(state: State<AppState>, mode: Option<String>) -> Result<B
         media_ids: None,
     };
     let (plan_id, items, summary) = path_planner::build_plan(&conn, &opts).map_err(err_str)?;
-    Ok(BuiltPlan { plan_id, summary, items })
+    Ok(BuiltPlan {
+        plan_id,
+        summary,
+        items,
+    })
 }
 
 #[tauri::command]
-pub fn get_sort_plan(state: State<AppState>, plan_id: String) -> Result<(Vec<PlanItem>, PlanSummary), String> {
+pub fn get_sort_plan(
+    state: State<AppState>,
+    plan_id: String,
+) -> Result<(Vec<PlanItem>, PlanSummary), String> {
     let conn = state.conn().map_err(err_str)?;
     let items = db::get_plan_items(&conn, &plan_id).map_err(err_str)?;
     let mut summary = PlanSummary::default();
@@ -73,18 +80,16 @@ pub fn update_plan_item(
     date: Option<String>,
 ) -> Result<String, String> {
     let conn = state.conn().map_err(err_str)?;
-    path_planner::recompute_item_dest(
-        &conn,
-        &plan_id,
-        &item_id,
-        place.as_deref(),
-        date.as_deref(),
-    )
-    .map_err(err_str)
+    path_planner::recompute_item_dest(&conn, &plan_id, &item_id, place.as_deref(), date.as_deref())
+        .map_err(err_str)
 }
 
 #[tauri::command]
-pub fn exclude_plan_item(state: State<AppState>, item_id: String, excluded: bool) -> Result<(), String> {
+pub fn exclude_plan_item(
+    state: State<AppState>,
+    item_id: String,
+    excluded: bool,
+) -> Result<(), String> {
     let conn = state.conn().map_err(err_str)?;
     let status = if excluded {
         kadr_core::domain::operation::PlanItemStatus::Excluded
