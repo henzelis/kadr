@@ -2,7 +2,7 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import {
   api, fmtBytes, fmtDate,
-  type ApplyProgress, type BuiltPlan, type PlanItem, type PlanSummary,
+  type ApplyProgress, type BuiltPlan, type PlanItem,
 } from "./api";
 
 export let plan: BuiltPlan | null;
@@ -12,6 +12,7 @@ export let applyProgress: ApplyProgress | null;
 export let notify: (msg: string, kind?: "ok" | "err") => void;
 export let mediaById: Map<string, any>;
 export let destRoot = "";
+export let onBack: () => void = () => {};
 
 function itemCap(it: PlanItem) {
   return mediaById?.get(it.media_id)?.captured_at_local ?? null;
@@ -21,10 +22,11 @@ function itemPlace(it: PlanItem) {
   if (!m) return "—";
   if (m.place_label) return m.place_label;
   if (m.latitude != null) return `${m.latitude.toFixed(4)}, ${m.longitude.toFixed(4)}`;
-  return "—";
+  return "Без геолокації";
 }
 
 let mode: "copy" | "move" = "copy";
+let planSearch = "";
 let confirmOpen = false;
 let editing: PlanItem | null = null;
 let editPlace = "";
@@ -33,14 +35,18 @@ let busy = false;
 
 $: applying = applyProgress && !applyProgress.finished;
 $: doneAll = applyProgress && applyProgress.finished && !applyProgress.error;
+$: filtered = (plan?.items ?? []).filter((it) => {
+  const q = planSearch.trim().toLowerCase();
+  return !q || it.source_path.toLowerCase().includes(q) || it.destination_path.toLowerCase().includes(q);
+});
 
 const statusBadge: Record<string, [string, string]> = {
-  pending: ["muted", "очікує"],
-  excluded: ["muted", "виключено"],
-  done: ["ok", "готово"],
+  pending: ["warn", "Перевірити"],
+  excluded: ["warn", "виключено"],
+  done: ["ready", "Готово"],
   skipped: ["warn", "пропущено"],
   failed: ["err", "помилка"],
-  undone: ["ok", "скасовано (undo)"],
+  undone: ["ready", "скасовано (undo)"],
   needs_user: ["warn", "потрібне рішення"],
 };
 
@@ -48,8 +54,8 @@ async function rebuild() {
   busy = true;
   try { await buildPlan(mode); } finally { busy = false; }
 }
-async function toggleMode() {
-  const next = mode === "copy" ? "move" : "copy";
+async function setMode(next: "copy" | "move") {
+  if (next === mode) return;
   if (next === "move") {
     if (!confirm("Переміщення ВИДАЛИТЬ оригінали після успішної перевірки копії.\nПродовжити?")) return;
   }
@@ -81,7 +87,7 @@ async function retry() {
 async function exportCsv(format: string) {
   if (!plan) return;
   const path = await save({
-    defaultPath: `kadr-plan-${format}.csv`.replace("csv", format),
+    defaultPath: `kadr-plan-${format}.${format}`,
     filters: [{ name: "Звіт", extensions: [format] }],
   });
   if (!path) return;
@@ -95,7 +101,6 @@ async function toggleExclude(item: PlanItem) {
   try {
     await api.excludePlanItem(item.id, ex);
     item.status = ex ? "excluded" : "pending";
-    plan = plan; // trigger update
     plan = { ...plan! };
   } catch (e) { notify(String(e), "err"); }
 }
@@ -116,113 +121,136 @@ async function saveEdit() {
 function baseName(p: string) {
   return p.split(/[\\/]/).pop() ?? p;
 }
+function ext(p: string) {
+  return (p.split(".").pop() ?? "").toUpperCase().slice(0, 4);
+}
 function destPreview(p: string, root: string) {
   return p.startsWith(root) ? "." + p.slice(root.length) : p;
 }
 </script>
 
-<div style="display:flex;flex-direction:column;gap:14px;">
-  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-    <h2 style="margin:0;">План сортування</h2>
-    <div class="chip" class:on={mode === "copy"} style="cursor:default;">
-      {mode === "copy" ? "✓ Копіювати (безпечно)" : "Копіювати"}
-    </div>
-    <button class="btn" onclick={toggleMode}>
-      {mode === "move" ? "✓ Перемістити" : "Перемістити"}
+<div class="view-controls">
+  <div>
+    <div class="section-heading" style="margin:0">Перевірте, куди потрапить кожен файл</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:5px">План ще не змінює файли на диску.</div>
+  </div>
+  <div class="view-right">
+    <div class="search-wrap"><span class="search-icon">⌕</span>
+      <input class="search" bind:value={planSearch} placeholder="Пошук у плані" aria-label="Пошук у плані" /></div>
+    <button class="btn secondary" onclick={rebuild} disabled={busy || applying}>
+      {busy ? "Побудова…" : "↻ План"}
     </button>
-    <button class="btn" onclick={rebuild} disabled={busy || applying}>
-      {busy ? "Побудова…" : "Побудувати план"}
-    </button>
-    {#if plan}
-      <button class="btn primary" onclick={() => (confirmOpen = true)} disabled={applying}>
-        Застосувати
-      </button>
-      {#if doneAll}
-        <button class="btn" onclick={undo} disabled={applying}>Undo</button>
-        <button class="btn" onclick={retry} disabled={applying}>Повторити помилки</button>
-      {/if}
-      <button class="btn ghost" onclick={() => exportCsv("csv")}>CSV</button>
-      <button class="btn ghost" onclick={() => exportCsv("json")}>JSON</button>
-    {/if}
+    <button class="btn ghost" onclick={() => exportCsv("csv")}>CSV</button>
+    <button class="btn ghost" onclick={() => exportCsv("json")}>JSON</button>
+  </div>
+</div>
+
+{#if !plan}
+  <div class="empty-state"><strong>План ще не побудовано</strong>
+    Завершіть сканування та виберіть папку архіву — потім «Переглянути план».
+    Жоден файл не зміниться до вашого підтвердження.
+    <div style="margin-top:12px;"><button class="btn primary" onclick={rebuild} disabled={busy}>
+      {busy ? "Побудова…" : "Побудувати план"}</button></div>
+  </div>
+{:else}
+  <div class="plan-summary">
+    <div class="plan-stat"><div class="plan-stat-num">{plan.summary.to_copy + plan.summary.to_move}</div>
+      <div class="plan-stat-label">готові до сортування</div></div>
+    <div class="plan-stat"><div class="plan-stat-num">{plan.summary.unknown_date + plan.summary.unknown_place}</div>
+      <div class="plan-stat-label">без дати або назви місця</div></div>
+    <div class="plan-stat"><div class="plan-stat-num">{plan.summary.conflicts}</div>
+      <div class="plan-stat-label">потенційні конфлікти / дублікати</div></div>
   </div>
 
-  {#if !plan}
-    <div class="empty">
-      План ще не побудовано. Перевірте, що сканування завершено та папку архіву вибрано в «Налаштуваннях»,
-      натисніть «Побудувати план». Жодних файлів не змінюється до «Застосувати».
-    </div>
-  {:else}
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <span class="badge muted">Всього: {plan.summary.total}</span>
-      <span class="badge ok">до копіювання: {plan.summary.to_copy}</span>
-      <span class="badge warn">до переміщення: {plan.summary.to_move}</span>
-      <span class="badge muted">конфлікти: {plan.summary.conflicts}</span>
-      <span class="badge warn">без дати: {plan.summary.unknown_date}</span>
-      <span class="badge warn">без місця: {plan.summary.unknown_place}</span>
-      <span class="badge muted">обсяг: {fmtBytes(plan.summary.expected_bytes)}</span>
-    </div>
+  <div class="plan-note">ⓘ <strong>Безпечний попередній перегляд.</strong>
+    Kadr не змінює жодного файла, доки ви не підтвердите виконання.
+    Обсяг: {fmtBytes(plan.summary.expected_bytes)} · всього файлів: {plan.summary.total}.</div>
 
-    {#if applyProgress}
-      <div class="banner" class:err={!!applyProgress.error}>
-        <span>{applyProgress.error ? "⚠" : applying ? "⏳" : "✓"}</span>
-        <span>
-          {applyProgress.error ??
-            `${applyProgress.done} готово, ${applyProgress.failed} помилок ${applyProgress.current ? "— " + baseName(applyProgress.current) : ""}`}
-        </span>
-        <div class="progress-track">
+  {#if applyProgress}
+    <div class="banner" class:err={!!applyProgress.error} style="margin-bottom:12px;">
+      <span>{applyProgress.error ? "⚠" : applying ? "⏳" : "✓"}</span>
+      <span style="flex:1">
+        {applyProgress.error ??
+          `${applyProgress.done} готово, ${applyProgress.failed} помилок${applyProgress.current ? " — " + baseName(applyProgress.current) : ""}`}
+        <div class="progress-track" style="margin-top:6px;">
           <div class="progress-fill"
             style="width:{applyProgress.total ? Math.round(((applyProgress.done + applyProgress.failed) / applyProgress.total) * 100) : 0}%"></div>
         </div>
-        {#if applying}
-          <button class="btn danger" onclick={() => api.cancelOperation()}>Скасувати</button>
-        {/if}
-      </div>
-    {/if}
+      </span>
+      {#if applying}
+        <button class="btn danger" onclick={() => api.cancelOperation()}>Скасувати</button>
+      {/if}
+    </div>
+  {/if}
 
-    <table class="plain">
-      <thead>
-        <tr><th></th><th>Файл</th><th>Дата</th><th>Місце</th><th>Цільовий шлях</th><th>Стан</th><th>Попередження</th><th></th></tr>
-      </thead>
+  <div class="plan-table-wrap">
+    <table class="plan-table">
+      <thead><tr>
+        <th>Вихідний файл</th><th>Дата зйомки</th><th>Місце</th><th>Цільовий шлях</th><th>Статус</th><th></th>
+      </tr></thead>
       <tbody>
-        {#each plan.items.slice(0, 500) as it (it.id)}
-          <tr class={it.status === "done" ? "row-done" : it.status === "failed" ? "row-failed" : ""}>
-            <td><input type="checkbox" checked={it.status === "excluded"}
-              aria-label="Виключити" onchange={() => toggleExclude(it)} /></td>
-            <td title={it.source_path}>{baseName(it.source_path)}{#if it.sidecar_of} <span class="badge muted">sidecar</span>{/if}</td>
+        {#each filtered.slice(0, 500) as it (it.id)}
+          <tr>
+            <td><div class="plan-file"><span class="file-mini">{ext(it.source_path)}</span>
+              <span>{baseName(it.source_path)}{#if it.sidecar_of} <span class="plan-badge warn">sidecar</span>{/if}</span>
+              <input type="checkbox" checked={it.status === "excluded"} title="Виключити файл з плану"
+                aria-label="Виключити" onchange={() => toggleExclude(it)} /></div>
+              {#each it.warnings as w}<div style="color:var(--amber);font-size:9px;">⚠ {w.message}</div>{/each}
+            </td>
             <td>{fmtDate(itemCap(it))}</td>
             <td>{itemPlace(it)}</td>
-            <td class="mono">{destPreview(it.destination_path, destRoot || '')}</td>
-            <td><span class="badge {statusBadge[it.status]?.[0]}">{statusBadge[it.status]?.[1]}</span>
-              {#if it.error}<div class="hint">{it.error}</div>{/if}</td>
-            <td>{#each it.warnings as w}<div class="hint">⚠ {w.message}</div>{/each}</td>
-            <td><button class="btn ghost" onclick={() => openEdit(it)} aria-label="Змінити дату/місце">✎</button></td>
+            <td class="plan-destination">{destPreview(it.destination_path, destRoot || "")}</td>
+            <td><span class="plan-badge {statusBadge[it.status]?.[0]}">{statusBadge[it.status]?.[1]}</span>
+              {#if it.error}<div style="color:var(--red);font-size:9px;">{it.error}</div>{/if}</td>
+            <td><button class="edit-text" onclick={() => openEdit(it)} title="Змінити дату/місце" aria-label="Змінити дату/місце">✎</button></td>
           </tr>
         {/each}
       </tbody>
     </table>
-    {#if plan.items.length > 500}
-      <div class="hint">Показано перші 500 з {plan.items.length}. Увімкніть фільтри в галереї для вузького плану.</div>
-    {/if}
+  </div>
+  {#if filtered.length > 500}
+    <div class="hint" style="margin-top:8px;">Показано перші 500 з {filtered.length}. Знайдіть потрібне через пошук у плані.</div>
   {/if}
-</div>
+
+  <div class="plan-bottom">
+    <div class="operation-mode">
+      <span class="mode-label">Режим операції</span>
+      <button class="mode-btn" class:active={mode === "copy"} onclick={() => setMode("copy")}>⧉ Копіювати</button>
+      <button class="mode-btn" class:active={mode === "move"} onclick={() => setMode("move")}>↗ Перемістити</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      {#if doneAll}
+        <button class="btn secondary" onclick={undo}>↺ Скасувати операцію</button>
+        <button class="btn secondary" onclick={retry}>Повторити помилки</button>
+      {/if}
+      <button class="btn secondary" onclick={onBack}>← До медіатеки</button>
+      <button class="btn primary" onclick={() => (confirmOpen = true)} disabled={applying}>
+        {mode === "copy" ? "Підтвердити сортування" : "Підтвердити переміщення"} →
+      </button>
+    </div>
+  </div>
+{/if}
 
 {#if confirmOpen && plan}
   <div class="modal-backdrop" role="dialog" aria-modal="true">
-    <div class="modal">
-      <h3>Підтвердження{mode === "move" ? " — небезпечна дія" : ""}</h3>
-      <p>
-        {mode === "copy"
-          ? "Kadr СКОПІЮЄ файли в папку архіву. Оригінали залишаться недоторканими."
-          : "Kadr ПЕРЕМІСТИТЬ файли: оригінали буде видалено лише після успішної перевірки копії (SHA-256)."}
-      </p>
-      <p>
-        Файлів: <b>{plan.items.filter((i) => i.status === "pending").length}</b> ·
+    <div class="modal-card">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Підтвердження{mode === "move" ? " — небезпечна дія" : ""}</div>
+          <div class="modal-subtitle">
+            {mode === "copy"
+              ? "Kadr СКОПІЮЄ файли в папку архіву. Оригінали залишаться недоторканими."
+              : "Kadr ПЕРЕМІСТИТЬ файли: оригінали буде видалено лише після успішної перевірки копії (SHA-256)."}
+          </div>
+        </div>
+        <button class="icon-button" aria-label="Закрити" onclick={() => (confirmOpen = false)}>×</button>
+      </div>
+      <p style="margin:0;">Файлів: <b>{plan.items.filter((i) => i.status === "pending").length}</b> ·
         обсяг: <b>{fmtBytes(plan.summary.expected_bytes)}</b> ·
-        режим: <b>{mode === "copy" ? "Копіювати" : "Перемістити"}</b>
-      </p>
-      <div style="display:flex;gap:10px;justify-content:flex-end;">
-        <button class="btn" onclick={() => (confirmOpen = false)}>Скасувати</button>
-        <button class="btn {mode === 'move' ? 'danger' : 'primary'}" onclick={doApply}>
+        режим: <b>{mode === "copy" ? "Копіювати" : "Перемістити"}</b></p>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick={() => (confirmOpen = false)}>Скасувати</button>
+        <button class="btn {mode === "move" ? "danger" : "primary"}" onclick={doApply}>
           {mode === "copy" ? "Копіювати" : "Перемістити"}
         </button>
       </div>
@@ -232,19 +260,18 @@ function destPreview(p: string, root: string) {
 
 {#if editing}
   <div class="modal-backdrop" role="dialog" aria-modal="true">
-    <div class="modal">
-      <h3>{baseName(editing.source_path)}</h3>
-      <div class="field">
-        <label>Місце (перевизначення)</label>
-        <input bind:value={editPlace} placeholder="напр. Карпати" />
+    <div class="modal-card">
+      <div class="modal-head">
+        <div><div class="modal-title">{baseName(editing.source_path)}</div>
+          <div class="modal-subtitle">Перевизначення не змінюють метадані оригінального файла.</div></div>
+        <button class="icon-button" aria-label="Закрити" onclick={() => (editing = null)}>×</button>
       </div>
-      <div class="field">
-        <label>Дата зйомки</label>
-        <input bind:value={editDate} placeholder="2025-08-12 14:03:22" />
-      </div>
-      <div class="hint">Перевизначення не змінюють метадані оригінального файлу.</div>
-      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px;">
-        <button class="btn" onclick={() => (editing = null)}>Скасувати</button>
+      <div class="form-row"><label>Місце (перевизначення)</label>
+        <input bind:value={editPlace} placeholder="напр. Карпати" /></div>
+      <div class="form-row"><label>Дата зйомки</label>
+        <input bind:value={editDate} placeholder="2025-08-12 14:03:22" /></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick={() => (editing = null)}>Скасувати</button>
         <button class="btn primary" onclick={saveEdit}>Зберегти</button>
       </div>
     </div>

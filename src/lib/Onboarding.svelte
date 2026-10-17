@@ -88,7 +88,7 @@ const ready = () => roots.length > 0 && !!settings?.destination_root;
 .wizard { max-width: 660px; margin: 5vh auto; display: flex; flex-direction: column; gap: 14px; }
 .wizard h2 { margin: 0 0 2px; }
 .sub { margin: 0 0 10px; opacity: .8; }
-.step { display: flex; gap: 14px; align-items: center; background: var(--panel, #fff); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.step { display: flex; gap: 14px; align-items: center; background: var(--surface-raised); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
 .step.done { border-color: var(--accent); }
 .num { flex: 0 0 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent-strong); font-weight: 700; }
 .step-body { flex: 1; min-width: 0; }
