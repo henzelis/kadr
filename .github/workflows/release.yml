@@ -8,7 +8,15 @@ permissions:
   contents: write
 
 jobs:
+  # GitHub keeps GITHUB_TOKEN read-only for ~10 min after push-triggered runs
+  # (enhanced compatibility). Creating the release before that window closes
+  # fails with 403 — wait it out once, then build.
+  warmup:
+    runs-on: ubuntu-22.04
+    steps:
+      - run: sleep 660
   build-and-release:
+    needs: warmup
     strategy:
       fail-fast: false
       matrix:
