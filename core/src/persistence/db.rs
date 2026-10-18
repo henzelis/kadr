@@ -17,6 +17,10 @@ pub fn open_db(path: &str) -> KResult<Connection> {
     let conn = Connection::open(path)
         .map_err(|e| KadrError::user_detail("Не вдалося відкрити базу даних", e.to_string()))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    // WAL allows one writer at a time; the UI (thumbnails, live stats) and the
+    // scanner thread write concurrently — without a busy timeout the loser of
+    // the race gets an instant SQLITE_BUSY and the scan aborts mid-run.
+    conn.pragma_update(None, "busy_timeout", 8000)?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     migrate(&conn)?;
     Ok(conn)
@@ -525,7 +529,7 @@ pub fn query_media(conn: &Connection, f: &MediaFilter) -> KResult<(Vec<MediaItem
         Some("size") => "size_bytes DESC",
         Some("name_desc") => "file_name COLLATE NOCASE DESC",
         Some("size_asc") => "size_bytes ASC",
-        _ => "COALESCE(captured_at_local, '9999') DESC, file_name ASC",
+        _ => "(captured_at_local IS NULL) ASC, captured_at_local DESC, file_name ASC",
     };
     let limit = f.limit.unwrap_or(200).min(2000);
     let offset = f.offset.unwrap_or(0);
@@ -911,6 +915,31 @@ mod tests {
             is_sidecar: false,
             sidecar_parent_id: None,
         }
+    }
+
+    #[test]
+    fn undated_items_sort_last_in_date_order() {
+        // Regression: gallery flooded with "Дата невідома" cards because
+        // COALESCE(captured_at_local,'9999') DESC floated NULL dates to the top.
+        let conn = open_db(":memory:").unwrap();
+        let root = add_source_root(&conn, "/z").unwrap();
+        let mut nodate = sample("/z/a_nodate.jpg");
+        nodate.file_name = "a_nodate.jpg".into();
+        nodate.captured_at_local = None;
+        let mut old = sample("/z/b_old.jpg");
+        old.file_name = "b_old.jpg".into();
+        old.captured_at_local = Some("2011-06-01T10:00:00".into());
+        let mut new = sample("/z/c_new.jpg");
+        new.file_name = "c_new.jpg".into();
+        new.captured_at_local = Some("2020-01-01T10:00:00".into());
+        for m in [&mut nodate, &mut old, &mut new] {
+            m.source_root_id = root.id.clone();
+            upsert_media_item(&conn, m).unwrap();
+        }
+        let (items, total) = query_media(&conn, &MediaFilter::default()).unwrap();
+        assert_eq!(total, 3);
+        let names: Vec<&str> = items.iter().map(|i| i.file_name.as_str()).collect();
+        assert_eq!(names, ["c_new.jpg", "b_old.jpg", "a_nodate.jpg"]);
     }
 
     #[test]

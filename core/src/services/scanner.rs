@@ -408,6 +408,11 @@ pub fn scan_root(
         // bar means "fully processed", not merely "discovered".
         if pending.len() >= FLUSH_BATCH {
             let chunk = std::mem::take(&mut pending);
+            // Release the write lock BEFORE batch subprocesses run: a held tx
+            // across ExifTool calls starves UI writes (gallery, stats) on the
+            // same DB and looks like a frozen app to the user.
+            tx.commit()?;
+            tx = conn.unchecked_transaction()?;
             flush_batch(
                 conn,
                 &mut tx,
